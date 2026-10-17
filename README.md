@@ -1,46 +1,156 @@
-# 喝水养鱼 · SIP
+<p align="center">
+  <img src="assets/icon.png" alt="喝水养鱼 SIP 像素图标" width="112">
+</p>
 
-**你喝水，桌面养鱼。**
+<h1 align="center">喝水养鱼 · SIP</h1>
 
-作者：[hexiaodou122](https://github.com/hexiaodou122)
+<p align="center"><strong>你喝水，桌面养鱼。</strong></p>
+<p align="center">给桌面添一点水，也给自己留一小片海。<br>每天喝满自己设定的目标，遇见一条新的鱼。</p>
 
-喝水养鱼（SIP）是一个 macOS 像素桌面喝水小工具。桌面底部一直留着浅浅的水，你喝水时顺手添一点；每天达到自己设定的目标，就会遇见一条鱼。
+<p align="center">
+  <strong>macOS 13+ · Apple Silicon · v0.1.1 试用版</strong>
+</p>
 
-水会在新一天退去，收藏的鱼会留下，等水涨起来再游回来。
+<p align="center">
+  <a href="https://github.com/hexiaodou122/SIP/releases/download/v0.1.1/Sip-0.1.1-mac-arm64.dmg"><strong>⬇ 下载 Mac 安装包</strong></a>
+  &nbsp; · &nbsp;
+  <a href="#agent-install"><strong>🤖 复制给 Agent 安装</strong></a>
+  &nbsp; · &nbsp;
+  <a href="https://github.com/hexiaodou122/SIP/releases/tag/v0.1.1">更新说明</a>
+</p>
 
-![SIP 初始化](docs/images/welcome.png)
+---
 
-## 怎么玩
+## ⬇ 把小海带回桌面
 
-- 鼠标移到屏幕右上角，或按住 Option 再点击桌面，叫出玻璃杯。
-- 左键按住杯子倒水，可边倒边拖，松手停止；轻点至少记一口。
-- 右键杯子打开图鉴，也可以按 **Control + Option + G**。
-- 菜单栏小杯子左键加一口，右键可撤回、隐藏、打开设置或退出。
-- 鼠标划过水面会有涟漪，靠近鱼会吓跑它。
+### 自己安装
 
-默认目标 **1500 ml**，轻点一口20 ml，按住约200 ml/秒。也可选1700 ml或自定义。SIP根据你的操作手动记账，不会检测你实际喝了多少水。
+**[下载 SIP v0.1.1（DMG，约 135 MB）](https://github.com/hexiaodou122/SIP/releases/download/v0.1.1/Sip-0.1.1-mac-arm64.dmg)**
 
-0%保留屏高6%的环境底水，100%达到40%。水在桌面层，不挡窗口或Dock，桌面点击仍然穿透；全屏App里不会显示。
+1. 打开下载的 DMG，将「喝水养鱼」拖到 **Applications（应用程序）**。
+2. 在应用程序里打开「喝水养鱼」，选择每天想喝的水量。
+3. 鼠标移到屏幕右上角，叫出杯子，开始添水。
 
-## 海里的朋友
+适用于 **M 系列 Mac、macOS 13 或更新系统**，暂不支持 Intel Mac、Windows 和 Linux。安装包已包含运行环境，无需安装 Node.js。
 
-第一天喝满固定遇见小丑鱼，以后优先随机遇见未收藏的物种，五种齐全后可以重复遇见。每次体型不同，图鉴记录首次日期、次数和最大体型。
+> 当前为试用版，尚未经过 Apple 开发者签名和公证，首次打开可能被 macOS 拦截。若遇到拦截，请先核对下载来源与提示内容；无需关闭系统安全保护。更新时先退出旧版，再替换应用，喝水记录和收藏会保留。
 
-| 物种 | 返场水量 | 体型范围 |
+<a id="agent-install"></a>
+
+### 🤖 复制这段，交给你的 Agent
+
+使用能操作本机文件和终端的 Agent（例如 Codex、Claude Code），复制下面整段发给它。**这是给 Agent 的安装请求，不是直接粘贴到终端执行的命令。** 只有聊天能力的助手可以指导操作，但无法替你安装。
+
+```text
+请帮我下载并安装「喝水养鱼 · SIP」v0.1.1。
+官方仓库：https://github.com/hexiaodou122/SIP
+
+先检查我的电脑是否为 Apple Silicon（M 系列）Mac，且 macOS >= 13。
+注意 Rosetta 环境下也要判断实际硬件。若不兼容，告诉我原因，不要安装。
+
+从以下官方地址下载 DMG 和校验和到下载文件夹：
+https://github.com/hexiaodou122/SIP/releases/download/v0.1.1/Sip-0.1.1-mac-arm64.dmg
+https://github.com/hexiaodou122/SIP/releases/download/v0.1.1/SHA256SUMS-0.1.1.txt
+
+下载完成后计算 DMG 的 SHA-256，核对校验和文件，并确认结果为：
+2a74906d11cf4e8e39bf41916bbad31a717e0c7411abb1337ec8f6e85e8008c2
+不一致或下载不完整就停止，不要安装。
+
+校验通过后挂载 DMG，把「喝水养鱼.app」安装到 /Applications。
+如果旧版正在运行，先让我退出；保留现有喝水记录和收藏，
+不要删除或改写 ~/Library/Application Support/sip 下的数据。
+需要系统授权时让我在系统界面操作，不要索要密码。
+
+安装后卸载磁盘镜像，打开应用，确认能启动，再告诉我结果。
+这是尚未经过 Apple 公证的试用版；如果被系统拦截，
+说明具体提示并引导我自行确认，不要自动移除隔离标记或关闭 Gatekeeper。
+只下载官方发布包，不要克隆源码、安装开发依赖或修改其他应用。
+
+最后告诉我：右上角或 Option＋点击桌面可以召出杯子，
+按住杯子倒水，右键杯子打开图鉴。
+```
+
+[查看此版本与校验和](https://github.com/hexiaodou122/SIP/releases/tag/v0.1.1)
+
+---
+
+## 🌊 喝一口，添一点水
+
+水一直安静地留在桌面底部。你喝水时，顺手往小海里添一点；水位随记录慢慢上涨，鱼也会从屏幕边缘游回来。
+
+**叫出杯子 → 按住倒水 → 喝满一天，遇见一条鱼。**
+
+| 想做什么 | 怎么操作 |
+|---|---|
+| 叫出杯子 | 鼠标移到右上角，或 Option＋点击桌面 |
+| 记录喝水 | 左键按住杯子倒水，松手停止；轻点至少记一口 |
+| 换个位置倒 | 按住杯子拖动，杯子和水柱一起移动 |
+| 看看收藏 | 右键杯子，或按 Control＋Option＋G |
+| 撤回、隐藏或设置 | 右键菜单栏的小杯子 |
+| 和小海玩一会儿 | 鼠标划过水面荡开涟漪，靠近鱼时它会躲开 |
+
+普通桌面点击、双击和拖动不会召杯，不影响打开文件夹。
+
+<p align="center">
+  <img src="docs/images/welcome.png" alt="SIP 欢迎页：操作介绍和每日水量选择" width="420">
+</p>
+
+---
+
+## 🐠 喝满一天，遇见一个新朋友
+
+第一条是小丑鱼。之后优先遇见没收藏过的物种；五种都遇见以后，还可以再次相遇，看看这次是不是更大的一条。
+
+| 海里的朋友 | 回来时的水量 | 体型范围 |
 |---|---|---|
-| 小丑鱼 | 10% | 8–11 cm |
-| 蓝倒吊 | 40% | 15–30 cm |
-| 河豚 | 40% | 10–30 cm |
-| 翻车鱼 | 75% | 100–300 cm |
-| 鮟鱇鱼 | 75% | 10–40 cm |
+| 小丑鱼 | ≥10% · 浅水 | 8–11 cm |
+| 蓝倒吊 | ≥40% · 中层 | 15–30 cm |
+| 河豚 | ≥40% · 中层 | 10–30 cm |
+| 翻车鱼 | ≥75% · 深海 | 100–300 cm |
+| 鮟鱇鱼 | ≥75% · 深海 | 10–40 cm |
 
-鱼在各自的浅、中、深水层游动。每天凌晨4:00换日，鱼先游出，水再退回浅水；没喝满不会失去已有收藏。
+图鉴会记下第一次相遇、遇见次数和最大体型。每天凌晨 4 点换日，鱼先游走，水退回浅浅的一层；等你再次添水，收藏的鱼就会回来。
 
-![SIP 图鉴，三种已收藏的测试样本](docs/images/collection.png)。
+**没喝满也没关系。已经遇见的鱼会一直留在收藏里。**
 
-## 本地运行
+![图鉴示例：三种已收藏的鱼，使用测试数据](docs/images/collection.png)
 
-已生成Apple Silicon本地试用安装包，最低目标系统macOS 13：`dist/Sip-0.1.1-mac-arm64.dmg`。打开镜像，将应用拖到Applications。当前仅作ad-hoc本地签名，未获Apple开发者签名或公证；尚未验证浏览器下载后的系统拦截和第二台电脑安装。安装包已发布，可在[Releases](https://github.com/hexiaodou122/SIP/releases/tag/v0.1.1)下载，后续设想见[路线图](ROADMAP.md)。
+---
+
+## ☁️ 安静地陪你喝水
+
+不催促、不发提醒、不做连续打卡，也没有少喝一天的惩罚。水在壁纸之上、窗口和 Dock 之下，不遮住工作窗口；目前只显示在主屏幕，全屏 App 中不显示。
+
+### 它会自动检测我喝水吗？
+
+不会。SIP 根据你的操作手动记录：默认每天 1500 ml，轻点一口为 20 ml，按住约 200 ml/秒。也可选择 1700 ml 或自定义目标。
+
+### 为什么刚开始就有水？
+
+屏幕底部的 6% 是环境底水，不算饮水量；目标喝满后，水占屏幕高度的 40%。
+
+### 记录放在哪里？
+
+喝水记录、设置和收藏保存在本机 `~/Library/Application Support/sip/sip-data.json`。换日不会删除收藏。
+
+### 装好了，但找不到入口？
+
+SIP 不在 Dock 显示图标。把鼠标移到主屏幕右上角，或按住 Option 点击桌面叫出杯子；菜单栏也有一个小杯子。
+
+---
+
+## 🪸 这片海还会长大
+
+计划增加更多鱼种，探索倒水时显示本次 ml、常用杯容量等体验。饮料、零食投喂与卡路里记录也在远期探索中，**这些都尚未实现**。
+
+[查看后续路线图](ROADMAP.md) · [报告问题 / 提出建议](https://github.com/hexiaodou122/SIP/issues)
+
+---
+
+## 🛠 给想自己运行或修改的人
+
+<details>
+<summary>展开源码运行、开发命令与拍摄快捷键</summary>
 
 从源码运行需要macOS、Node.js/npm，以及用于编译鼠标小助手的Xcode命令行工具。
 
@@ -61,7 +171,7 @@ npm start
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm ci
 ```
 
-## 开发
+### 开发命令
 
 ```bash
 npm run dev       # 独立开发数据
@@ -95,10 +205,11 @@ npm run dev -- --demo-three-days     # 重置开发数据为三天喝满、三�
 
 默认正式数据：`~/Library/Application Support/sip/sip-data.json`；开发数据在其`development`子目录。`SIP_DATA_DIR=/自选目录 npm run dev`可进一步隔离。
 
-## 项目状态
 
-已实现核心互动、五种鱼收藏、分层游动、图鉴和明亮像素欢迎页。只支持主屏幕。已构建本地试用dmg；Apple开发者签名/公证、第二台电脑安装、开机自启和CPU基准仍待验收。
+</details>
 
-- [后续计划：更多鱼、倒水ml反馈等](ROADMAP.md)
+---
 
-中文名为「喝水养鱼」，英文名SIP。许可证尚未选定，未添加LICENSE，暂不宣称已采用任何开源许可。
+由 [hexiaodou122](https://github.com/hexiaodou122) 创作。当前为试用版，第二台电脑安装、开机自启与 CPU 基准仍待进一步验收。
+
+许可证尚未选定；公开源码不代表已授予开源许可证。
