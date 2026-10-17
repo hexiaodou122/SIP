@@ -1,0 +1,31 @@
+# Sip
+
+用屏幕上的水位陪你喝水。完整设计见 [AGENTS.md](AGENTS.md)。
+
+## 运行
+
+```bash
+npm install
+npm start
+```
+
+如果 `npm install` 卡在下载 Electron，用国内镜像：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
+```
+
+## 怎么用
+
+- **右上角**（菜单栏正下方）停一下鼠标 → 降下玻璃杯。单击 = 一口，按住 = 一杯。
+- **菜单栏小杯子**：左键 = 一口；右键（或 Option + 左键）= 撤回 / 今天先藏起来 / 设置 / 退出。
+
+## 开发
+
+- `npm run dev`：开发模式。右键菜单里多一个"开发"子菜单；全局快捷键 `Ctrl+Option+0~4` 设水位 0–100%，`Ctrl+Option+F` 倒满，`Ctrl+Option+E` 蒸发，`Ctrl+Option+C` 降下杯子。
+- `npm run preview`：在浏览器里单独打开水的画面，用键盘调试（页面左下角有按键说明）。
+- `npm run icons`：重新生成菜单栏图标。
+- `npm run dist`：打包 `.dmg`。
+- `SIP_DATA_DIR=/某个目录 npm start`：用另一份数据测试，不碰真实数据。
+
+数据存在 `~/Library/Application Support/sip/sip-data.json`。

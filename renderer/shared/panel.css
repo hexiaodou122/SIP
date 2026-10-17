@@ -1,0 +1,80 @@
+/* 首次启动 / 设置 两个小窗口共用的样式：安静、干净 */
+:root {
+  --text: #1f2a30;
+  --muted: #6b7a82;
+  --line: rgba(31, 42, 48, 0.10);
+  --card: rgba(255, 255, 255, 0.55);
+  --card-on: rgba(255, 255, 255, 0.92);
+  --accent: #4f8aa3;
+  --accent-soft: rgba(79, 138, 163, 0.14);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e6eef2;
+    --muted: #93a3ab;
+    --line: rgba(230, 238, 242, 0.12);
+    --card: rgba(255, 255, 255, 0.06);
+    --card-on: rgba(255, 255, 255, 0.14);
+    --accent: #8cc3d8;
+    --accent-soft: rgba(140, 195, 216, 0.16);
+  }
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  color: var(--text);
+  background: transparent;
+  -webkit-user-select: none; user-select: none;
+}
+body { padding: 44px 32px 28px; -webkit-app-region: drag; }
+button, input, label, .card, select { -webkit-app-region: no-drag; }
+
+h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; letter-spacing: 0.2px; }
+.sub { color: var(--muted); margin: 0 0 22px; }
+
+.card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 16px; margin-bottom: 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  cursor: pointer; transition: background .2s, border-color .2s;
+}
+.card:hover { background: var(--card-on); }
+.card.on { background: var(--card-on); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.card input[type=radio] { display: none; }
+.card .big { font-size: 16px; font-weight: 600; min-width: 84px; }
+.card .small { color: var(--muted); }
+
+.custom { display: none; padding: 4px 4px 0; }
+.custom.show { display: block; }
+.row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.row label { width: 72px; color: var(--muted); }
+input[type=number] {
+  width: 96px; padding: 6px 10px; font: inherit; color: var(--text);
+  background: var(--card-on); border: 1px solid var(--line); border-radius: 8px; outline: none;
+}
+input[type=number]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.unit { color: var(--muted); }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+
+.primary {
+  display: block; width: 100%; margin-top: 18px; padding: 10px;
+  font: inherit; font-weight: 600; color: #fff;
+  background: var(--accent); border: none; border-radius: 10px; cursor: pointer;
+}
+.primary:hover { filter: brightness(1.06); }
+
+.section { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.switch-row { display: flex; align-items: center; justify-content: space-between; margin: 12px 0; }
+.switch { position: relative; width: 38px; height: 22px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span {
+  position: absolute; inset: 0; border-radius: 11px; background: var(--line); transition: background .2s; cursor: pointer;
+}
+.switch span::after {
+  content: ""; position: absolute; left: 2px; top: 2px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s;
+}
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(16px); }

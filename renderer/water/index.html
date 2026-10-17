@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Sip Water</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+    canvas {
+      position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+      transition: opacity 0.7s ease;
+    }
+    canvas.dim { opacity: 0.32; }
+
+    /* 只在浏览器里单独预览时出现：模拟一个桌面，好看水的透明度 */
+    body.preview {
+      background:
+        radial-gradient(1200px 700px at 20% 15%, #d9c6b5 0%, transparent 60%),
+        radial-gradient(900px 600px at 85% 30%, #8fa7b8 0%, transparent 65%),
+        linear-gradient(160deg, #e8dccd, #a9b9c4 60%, #6d7f8d);
+      font: 13px -apple-system, "PingFang SC", sans-serif;
+    }
+    body.preview .menubar {
+      position: fixed; top: 0; left: 0; right: 0; height: 25px;
+      background: rgba(245, 245, 245, 0.72); backdrop-filter: blur(20px);
+    }
+    body.preview .doc {
+      position: fixed; left: 8%; top: 12%; width: 46%; height: 70%;
+      background: #fbfaf8; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.25);
+      padding: 48px 56px; box-sizing: border-box; color: #333; line-height: 1.9;
+    }
+    body.preview .dark {
+      position: fixed; right: 7%; top: 30%; width: 32%; height: 58%;
+      background: #1e1f22; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.35);
+      color: #9da5b4; padding: 32px; box-sizing: border-box; font-family: Menlo, monospace; line-height: 1.8;
+    }
+    body.preview .help {
+      position: fixed; left: 12px; bottom: 10px; color: rgba(0,0,0,.55); font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="water"></canvas>
+  <script src="water.js"></script>
+</body>
+</html>

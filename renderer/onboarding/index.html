@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Sip</title>
+  <link rel="stylesheet" href="../shared/panel.css">
+</head>
+<body>
+  <h1>你一天想喝多少水？</h1>
+  <p class="sub">喝够了，屏幕上的水正好涨满。以后随时可以改。</p>
+
+  <label class="card on" data-goal="1500" data-sip="20">
+    <input type="radio" name="goal" checked>
+    <span class="big">1500 ml</span><span class="small">每口按 20 ml</span>
+  </label>
+  <label class="card" data-goal="1700" data-sip="25">
+    <input type="radio" name="goal">
+    <span class="big">1700 ml</span><span class="small">每口按 25 ml</span>
+  </label>
+  <label class="card" data-custom>
+    <input type="radio" name="goal">
+    <span class="big">自己填</span>
+  </label>
+
+  <div class="custom" id="custom">
+    <div class="row"><label for="goal">每天</label><input id="goal" type="number" min="300" max="6000" step="50" value="2000"><span class="unit">ml</span></div>
+    <div class="row"><label for="sip">每口</label><input id="sip" type="number" min="5" max="200" step="1" value="25"><span class="unit">ml</span></div>
+    <p class="hint">天热、运动、出汗多的时候可以多一点</p>
+  </div>
+
+  <button class="primary" id="go">就这样</button>
+  <script src="onboarding.js"></script>
+</body>
+</html>

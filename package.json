@@ -1,0 +1,36 @@
+{
+  "name": "sip",
+  "productName": "Sip",
+  "version": "0.1.0",
+  "description": "用屏幕上的水位陪你喝水",
+  "main": "main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "SIP_DEV=1 electron .",
+    "preview": "node scripts/preview.js",
+    "icons": "node scripts/make-tray-icons.js",
+    "dist": "electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "app.sip.water",
+    "productName": "Sip",
+    "mac": {
+      "category": "public.app-category.lifestyle",
+      "target": "dmg",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
+    "files": [
+      "main/**",
+      "renderer/**",
+      "assets/**",
+      "package.json"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  }
+}
