@@ -11,3 +11,13 @@ sip-data.json.tmp
 .env.*
 !.env.example
 *.log
+
+# Local agent context and handoff notes (never publish)
+.claude/
+.codex/
+.agents/
+AGENTS.md
+CLAUDE.md
+HANDOFF.md
+docs/DESIGN.md
+docs/RELEASE-READINESS.md
