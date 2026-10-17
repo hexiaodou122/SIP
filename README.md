@@ -12,7 +12,7 @@
 
 ## 怎么玩
 
-- 鼠标移到屏幕右上角，或在桌面空白处轻点，叫出玻璃杯。
+- 鼠标移到屏幕右上角，或按住 Option 再点击桌面，叫出玻璃杯。
 - 左键按住杯子倒水，可边倒边拖，松手停止；轻点至少记一口。
 - 右键杯子打开图鉴，也可以按 **Control + Option + G**。
 - 菜单栏小杯子左键加一口，右键可撤回、隐藏、打开设置或退出。
@@ -40,7 +40,7 @@
 
 ## 本地运行
 
-已生成Apple Silicon本地试用安装包，最低目标系统macOS 13：`dist/Sip-0.1.0-mac-arm64.dmg`。打开镜像，将应用拖到Applications。当前仅作ad-hoc本地签名，未获Apple开发者签名或公证；尚未验证浏览器下载后的系统拦截和第二台电脑安装。安装包已发布，可在[Releases](https://github.com/hexiaodou122/sip/releases/tag/v0.1.0)下载，后续设想见[路线图](ROADMAP.md)。
+已生成Apple Silicon本地试用安装包，最低目标系统macOS 13：`dist/Sip-0.1.1-mac-arm64.dmg`。打开镜像，将应用拖到Applications。当前仅作ad-hoc本地签名，未获Apple开发者签名或公证；尚未验证浏览器下载后的系统拦截和第二台电脑安装。安装包已发布，可在[Releases](https://github.com/hexiaodou122/sip/releases/tag/v0.1.1)下载，后续设想见[路线图](ROADMAP.md)。
 
 从源码运行需要macOS、Node.js/npm，以及用于编译鼠标小助手的Xcode命令行工具。
 

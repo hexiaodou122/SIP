@@ -1,7 +1,7 @@
 {
   "name": "sip",
   "productName": "喝水养鱼",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "喝水养鱼 · SIP：你喝水，桌面养鱼",
   "main": "main/main.js",
   "private": true,

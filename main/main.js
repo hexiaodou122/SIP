@@ -525,7 +525,9 @@ function onMouse(ev) {
 
   if (ev.t === 'down') {
     const onCup = cupShown && inside(p, cupWin.getBounds());
-    if (!usable || !onDesk || onCup || cupBusy) return;
+    // Window hit testing cannot distinguish Finder icons from empty desktop.
+    // Require the explicit Option gesture; fail closed with older helpers.
+    if (ev.summon !== true || !usable || !onDesk || onCup || cupBusy) return;
     mouse.down = { x: p.x, y: p.y, cancelled: false };
     mouse.down.timer = setTimeout(() => {
       if (!mouse.down || mouse.down.cancelled) return;

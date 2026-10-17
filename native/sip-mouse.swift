@@ -2,7 +2,7 @@
 // 输出一行一个 JSON：
 //   {"t":"move"|"drag","x":..,"y":..,"desk":true|false}
 //   {"t":"down","x":..,"y":..,"desk":..}   {"t":"up","x":..,"y":..}
-// desk = 这个位置上面没有任何窗口（看得到桌面和水）。
+// desk = 这个位置上面没有普通窗口；不能区分Finder桌面图标和空白。
 // 坐标：主屏左上角为原点，单位 point，和 Electron 的 screen 坐标一致。
 
 import Cocoa
@@ -69,9 +69,10 @@ func overDesktop(_ p: CGPoint, fresh: Bool) -> Bool {
   return true
 }
 
-func emit(_ t: String, _ p: CGPoint, desk: Bool?) {
+func emit(_ t: String, _ p: CGPoint, desk: Bool?, summon: Bool? = nil) {
   var s = "{\"t\":\"\(t)\",\"x\":\(Int(p.x.rounded())),\"y\":\(Int(p.y.rounded()))"
   if let d = desk { s += ",\"desk\":\(d)" }
+  if let allowed = summon { s += ",\"summon\":\(allowed)" }
   print(s + "}")
 }
 
@@ -85,9 +86,10 @@ NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { 
   emit(e.type == .leftMouseDragged ? "drag" : "move", p, desk: overDesktop(p, fresh: false))
 }
 
-NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { _ in
+NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { e in
   let p = cursor()
-  emit("down", p, desk: overDesktop(p, fresh: true))
+  // Only an explicit Option-click may summon; ordinary Finder clicks remain untouched.
+  emit("down", p, desk: overDesktop(p, fresh: true), summon: e.modifierFlags.contains(.option))
 }
 
 NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { _ in
