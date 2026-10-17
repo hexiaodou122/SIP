@@ -6,7 +6,8 @@
   <title>Sip Water</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
-    canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 1; }
+    /* 低分辨率画布按整数倍放大，保持像素颗粒清楚 */
+    canvas { position: fixed; left: 0; top: 0; display: block; z-index: 1; image-rendering: pixelated; }
 
     /* 只在浏览器里单独预览时出现：模拟一个桌面（窗口和 Dock 都盖在水上面） */
     body.preview {
@@ -38,7 +39,6 @@
   </style>
 </head>
 <body>
-  <canvas id="gl"></canvas>
   <canvas id="water"></canvas>
   <script src="sprites.js"></script>
   <script src="water.js"></script>

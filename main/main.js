@@ -11,6 +11,11 @@ const store = require('./store');
 
 const DEV = process.env.SIP_DEV === '1';
 
+// 满水位 = 屏幕高度的几分之几（从屏幕最底部往上涨）。想让水更高/更低，改这里。
+const WATER_FULL_RATIO = 1 / 3;
+// 像素格大小（屏幕 px），水、杯子、鱼都在这个网格上。和 renderer 里的 PX 一致。
+const PX = 3;
+
 const CORNER_SIZE = 60;        // 右上角热区 60×60
 const CORNER_DWELL_MS = 100;   // 鼠标一到角落就降下杯子（留一点点防误触）
 const CUP_LEAVE_MS = 600;      // 离开多久收回杯子
@@ -46,7 +51,7 @@ const menuBarHeight = () => {
   const d = display();
   return Math.max(0, d.workArea.y - d.bounds.y);
 };
-// 水窗口需要知道菜单栏多高、Dock 顶边在哪（起始水位要淹过 Dock）
+// 水窗口需要知道菜单栏多高、满水位比例；Dock 顶边用来排除 Dock 上的点击
 const geometry = () => {
   const d = display();
   const b = d.bounds;
@@ -55,6 +60,7 @@ const geometry = () => {
   return {
     menuBar: menuBarHeight(),
     dockTop: gapBottom > 8 ? wa.y + wa.height - b.y : null,
+    fullRatio: WATER_FULL_RATIO,
   };
 };
 const totalMl = () => store.totalMl(data.today);
@@ -133,11 +139,17 @@ function createWaterWindow() {
   waterWin.webContents.on('render-process-gone', () => { waterReady = false; });
 }
 
+// 窗口位置对齐到像素网格，杯子和水才是同一套格子，水柱接得上
+function snap(v, origin, up = false) {
+  const k = (v - origin) / PX;
+  return origin + (up ? Math.ceil(k) : Math.round(k)) * PX;
+}
+
 function cupBounds() {
   const d = display();
   return {
-    x: d.bounds.x + d.bounds.width - CUP_WIN.width,
-    y: d.workArea.y,
+    x: snap(d.bounds.x + d.bounds.width - CUP_WIN.width, d.bounds.x),
+    y: snap(d.workArea.y, d.bounds.y, true),
     width: CUP_WIN.width,
     height: CUP_WIN.height,
   };
@@ -334,22 +346,20 @@ function inside(p, r) {
 // 水面现在的高度（屏幕坐标），和水窗口里的算法一致
 function waterSurfaceY() {
   const d = display();
-  const g = geometry();
-  const floor = (g.dockTop != null ? g.dockTop : d.bounds.height - 70) - 30;
-  const top = g.menuBar + 8;
-  return d.bounds.y + floor - progress() * (floor - top);
+  const H = d.bounds.height;
+  return d.bounds.y + H - progress() * H * WATER_FULL_RATIO;
 }
 
 // 点出来的杯子：杯身在鼠标下面；如果点在水里，杯子浮到水面上方
 function hereBounds(p) {
   const d = display();
-  let x = Math.round(p.x - CUP_ANCHOR.x);
-  let y = Math.round(p.y - CUP_ANCHOR.y);
+  let x = p.x - CUP_ANCHOR.x;
+  let y = p.y - CUP_ANCHOR.y;
   const surface = waterSurfaceY();
-  if (y + 74 > surface - 6) y = Math.round(surface - 80);
+  if (y + 72 > surface - 9) y = surface - 81;          // 杯底在画布第 22 行（66px）
   x = Math.max(d.bounds.x, Math.min(d.bounds.x + d.bounds.width - CUP_WIN.width, x));
   y = Math.max(d.workArea.y, y);
-  return { x, y, width: CUP_WIN.width, height: CUP_WIN.height };
+  return { x: snap(x, d.bounds.x), y: snap(y, d.bounds.y), width: CUP_WIN.width, height: CUP_WIN.height };
 }
 
 function showCup(mode = 'corner', at = null, pour = false) {

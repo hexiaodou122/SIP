@@ -1,40 +1,59 @@
-// 水窗口（铺在桌面层，所有窗口都在它上面）
-// 两层画布：
-//   #gl    —— WebGL 画水体：随深度变色、焦散光网、斜射光柱、水面下的银色反光带
-//   #water —— 2D 画水面亮线、像素鱼、水柱、水花、气泡、浮游微粒、雾
+// 水窗口（铺在桌面层，所有窗口都在它上面）—— 像素风
+// 整个画面画在一张低分辨率画布上（1 个像素 = 屏幕上 PX×PX），再用 pixelated 放大：
+//   水：不透明平涂，3 层颜色台阶；水面一条浅色像素线 + 几颗白色高光
+//   像素鱼、像素气泡、像素水柱 / 水花 / 蒸汽
 // 在 Electron 里由主进程驱动；直接用浏览器打开时进入"预览模式"，用键盘调试。
 
 (() => {
   'use strict';
 
-  const TAU = Math.PI * 2;
-  const GRAVITY = 2600;          // 水流下落的重力（px/s²）
-  const STEP = 4;                // 水面采样间隔（px）
-  const IDLE_FPS = 30;           // 平时的帧率（焦散一直在动）
+  // ---- 可调常量 ----
+  const PX = 3;                  // 像素格大小（屏幕 px）。杯子窗口和主进程用同一个值，才能对齐
+  let FULL_RATIO = 1 / 3;        // 满水位 = 屏幕高度的几分之几（主进程会传来，见 main.js WATER_FULL_RATIO）
+  const GRAVITY = 2600;          // 水柱下落重力（px/s²），杯子窗口里用同一个值
+  const STREAM_V0 = 160;         // 水柱出杯口的初速度（px/s），杯子窗口里用同一个值
+  const STEP = 4;                // 水面计算采样（屏幕 px）
+  const IDLE_FPS = 20;
 
-  const glCanvas = document.getElementById('gl');
+  // 调色板（不透明）
+  const C = {
+    line: rgb(0xbf, 0xef, 0xfa),     // 水面浅色像素线
+    hi: rgb(0xff, 0xff, 0xff),       // 白色高光
+    bandA: rgb(0x4f, 0xb4, 0xdf),    // 第 1 层：水面下几行，跟着波浪走
+    bandB: rgb(0x36, 0x8f, 0xc9),    // 第 2 层
+    bandC: rgb(0x27, 0x6c, 0xab),    // 第 3 层：深处
+    foam: '#e9fbff',
+    streamA: '#e9fbff',
+    streamB: '#8fd9f2',
+    bubble: '#d4f4ff',
+    steam: '#e8f6fb',
+  };
+  const BAND_A_ROWS = 3;             // 第 1 层厚度（像素行）
+  const BAND_C_FROM = 0.42;          // 水深的这个比例往下是第 3 层（跟着水位走，任何水位都看得到三层）
+
+  const TAU = Math.PI * 2;
   const canvas = document.getElementById('water');
   const ctx = canvas.getContext('2d');
 
   const api = window.sip || createPreviewApi();
 
-  let W = 0, H = 0, DPR = 1;
+  let W = 0, H = 0;          // 屏幕尺寸（px）
+  let LW = 0, LH = 0;        // 像素画布尺寸
+  let img = null, buf = null;
   let menuBar = 25;
-  let dockTop = null;            // Dock 顶边（屏幕坐标），没有就按底部留 70px
   let settings = { goalMl: 1500, sipMl: 20, cupMl: 250, sound: false };
   let stateMl = 0;
   let paused = false;
   let ready = false;
 
-  const level = { x: 0, v: 0 };  // 画面上的水位 0..1，带弹簧
+  const level = { x: 0, v: 0 };
   let lastTarget = 0;
 
-  const flights = [];   // 正在下落的水
-  const ripples = [];   // 水面波纹
-  const drops = [];     // 溅起的水珠
-  const bubbles = [];   // 气泡
-  const mists = [];     // 蒸发的雾
-  let motes = [];       // 水里漂着的微粒
+  const flights = [];
+  const ripples = [];
+  const drops = [];
+  const bubbles = [];
+  const steams = [];
   let fullFx = null;
   let evap = null;
 
@@ -45,45 +64,43 @@
   let lastDraw = 0;
   let nextAmbientBubble = 0;
 
-  // 鼠标划水
-  let cursor = null;             // { x, y, vx, vy, t }
+  let cursor = null;
   let lastCursorFx = 0;
   let lastWake = 0;
 
+  const highlights = Array.from({ length: 9 }, (_, i) => ({
+    u: (i + Math.random() * 0.6) / 9,          // 在屏幕宽度上的位置（0..1）
+    len: 1 + Math.floor(Math.random() * 3),
+    speed: (Math.random() < 0.5 ? -1 : 1) * (0.004 + Math.random() * 0.006),
+    ph: Math.random() * TAU,
+  }));
+
   // ---------- 几何 ----------
 
-  const topY = () => menuBar + 8;                         // 满了：水面在菜单栏下面一点
-  const floorY = () => (dockTop != null ? dockTop : H - 70) - 30; // 空的时候也淹过 Dock
-  const levelToY = (lv) => floorY() - lv * (floorY() - topY());
+  const fullHeight = () => H * FULL_RATIO;
+  const levelToY = (lv) => H + 6 - lv * (fullHeight() + 6);   // 0% 在屏幕最底下，100% 在 1/3 高度
 
   function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth;
     H = window.innerHeight;
-    canvas.width = Math.round(W * DPR);
-    canvas.height = Math.round(H * DPR);
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    LW = Math.ceil(W / PX);
+    LH = Math.ceil(H / PX);
+    canvas.width = LW;
+    canvas.height = LH;
+    canvas.style.width = LW * PX + 'px';
+    canvas.style.height = LH * PX + 'px';
+    ctx.imageSmoothingEnabled = false;
+    img = ctx.createImageData(LW, LH);
+    buf = new Uint32Array(img.data.buffer);
     ys = new Float32Array(Math.ceil(W / STEP) + 2);
-    motes = Array.from({ length: Math.round(W / 26) }, () => ({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      r: 0.6 + Math.random() * 0.9,
-      a: 0.12 + Math.random() * 0.22,
-      vx: (Math.random() - 0.5) * 3,
-      vy: (Math.random() - 0.3) * 2.5,
-      ph: Math.random() * TAU,
-    }));
-    water3d.resize();
   }
 
   // ---------- 水面 ----------
 
   function wave(x, t) {
-    return 2.6 * Math.sin(x * TAU / 1150 + t * TAU / 11.0)
-      + 1.6 * Math.sin(x * TAU / 640 - t * TAU / 8.5 + 1.3)
-      + 0.9 * Math.sin(x * TAU / 330 + t * TAU / 9.7 + 4.1)
-      + 0.45 * Math.sin(x * TAU / 97 + t * 1.9 + 0.7)     // 细碎的小浪
-      + 0.3 * Math.sin(x * TAU / 53 - t * 2.7 + 2.2);
+    return 2.8 * Math.sin(x * TAU / 1150 + t * TAU / 11.0)
+      + 1.8 * Math.sin(x * TAU / 640 - t * TAU / 8.5 + 1.3)
+      + 1.0 * Math.sin(x * TAU / 330 + t * TAU / 9.7 + 4.1);
   }
 
   function rippleAt(x, t) {
@@ -103,50 +120,40 @@
   function addRipple(x, amp, o = {}) {
     ripples.push({
       x, amp, t0: now + (o.delay || 0),
-      speed: o.speed || 110,
-      k: TAU / (o.wl || 44),
-      tau: o.tau || 1.1,
-      w: o.w || 20,
-      spread: o.spread || 18,
+      speed: o.speed || 110, k: TAU / (o.wl || 48), tau: o.tau || 1.1,
+      w: o.w || 22, spread: o.spread || 18,
     });
     if (ripples.length > 50) ripples.shift();
   }
 
   function surfaceAt(x) {
-    const i = Math.max(0, Math.min(ys.length - 1, Math.round(x / STEP)));
-    return ys[i];
+    const f = x / STEP;
+    const i = Math.max(0, Math.min(ys.length - 2, Math.floor(f)));
+    return ys[i] + (ys[i + 1] - ys[i]) * clamp(f - i, 0, 1);
   }
 
   function splash(x, y, strength = 1) {
-    const n = Math.round(4 + 6 * strength);
+    const n = Math.round(3 + 5 * strength);
     for (let i = 0; i < n; i++) {
       drops.push({
-        x: x + (Math.random() - 0.5) * 5,
-        y: y - 1,
-        vx: (Math.random() - 0.5) * 120 * strength,
-        vy: -(80 + Math.random() * 170) * Math.sqrt(strength),
-        r: 0.7 + Math.random() * 1.0,
+        x: x + (Math.random() - 0.5) * 6, y: y - 2,
+        vx: (Math.random() - 0.5) * 130 * strength,
+        vy: -(90 + Math.random() * 170) * Math.sqrt(strength),
         age: 0,
       });
     }
-    if (drops.length > 200) drops.splice(0, drops.length - 200);
+    if (drops.length > 160) drops.splice(0, drops.length - 160);
   }
 
   function addBubble(x, y, r) {
-    bubbles.push({
-      x, y,
-      r: r || 1.2 + Math.random() * 2.3,
-      vy: -10,
-      wob: 0.4 + Math.random() * 0.8,
-      ph: Math.random() * TAU,
-    });
-    if (bubbles.length > 160) bubbles.shift();
+    bubbles.push({ x, y, r: r || 1 + Math.random() * 2.5, vy: -10, wob: 0.5 + Math.random(), ph: Math.random() * TAU });
+    if (bubbles.length > 120) bubbles.shift();
   }
 
-  // ---------- 下落的水 ----------
+  // ---------- 下落的水：竖直往下，和杯子窗口里那一段是同一条 ----------
 
-  function posAt(f, tau) {
-    return { x: f.x0 + f.vx * tau, y: f.y0 + f.v0 * tau + 0.5 * GRAVITY * tau * tau };
+  function headY(f, tau) {
+    return f.y0 + f.v0 * tau + 0.5 * GRAVITY * tau * tau;
   }
 
   function landTau(f) {
@@ -159,30 +166,23 @@
   function addSlug(from, ml, kind) {
     const drop = kind === 'drop';
     flights.push({
-      kind, x0: from.x, y0: from.y,
-      vx: drop ? 0 : -55, v0: drop ? 40 : 120,
-      tStart: now, tEnd: now + (drop ? 0.035 : 0.2),
+      kind, x0: from.x, y0: from.y, v0: drop ? 40 : STREAM_V0,
+      tStart: now, tEnd: now + (drop ? 0.03 : 0.2),
       ml, rate: null, landT: null, landedMl: 0, lastFx: 0,
     });
   }
 
   function startStream(from, rate) {
     flights.push({
-      kind: 'stream', x0: from.x, y0: from.y,
-      vx: -60, v0: 160,
-      tStart: now, tEnd: null,
-      ml: null, rate, landT: null, landedMl: 0, lastFx: 0,
+      kind: 'stream', x0: from.x, y0: from.y, v0: STREAM_V0,
+      tStart: now, tEnd: null, ml: null, rate, landT: null, landedMl: 0, lastFx: 0,
     });
   }
 
   function endStream(ml) {
     for (let i = flights.length - 1; i >= 0; i--) {
       const f = flights[i];
-      if (f.kind === 'stream' && f.tEnd == null) {
-        f.tEnd = now;
-        f.ml = ml;
-        return;
-      }
+      if (f.kind === 'stream' && f.tEnd == null) { f.tEnd = now; f.ml = ml; return; }
     }
   }
 
@@ -193,12 +193,11 @@
       f.tl = tl;
       if (f.landT == null && now - f.tStart >= tl) {
         f.landT = now;
-        const p = posAt(f, tl);
-        const big = f.kind === 'stream' ? 1.3 : f.kind === 'drop' ? 0.55 : 0.9;
-        splash(p.x, p.y, big);
-        addRipple(p.x, f.kind === 'drop' ? 2.2 : 3.4, { tau: 1.2 });
-        for (let b = 0; b < (f.kind === 'drop' ? 2 : 6); b++) {
-          addBubble(p.x + (Math.random() - 0.5) * 10, p.y + 8 + Math.random() * 30);
+        const y = headY(f, tl);
+        splash(f.x0, y, f.kind === 'stream' ? 1.2 : f.kind === 'drop' ? 0.5 : 0.85);
+        addRipple(f.x0, f.kind === 'drop' ? 2.5 : 3.6, { tau: 1.2 });
+        for (let b = 0; b < (f.kind === 'drop' ? 2 : 5); b++) {
+          addBubble(f.x0 + (Math.random() - 0.5) * 12, y + 10 + Math.random() * 30);
         }
         if (f.kind !== 'stream') f.landedMl = f.ml;
         drip();
@@ -206,14 +205,12 @@
       if (f.landT != null && f.kind === 'stream' && (f.tEnd == null || now - f.tEnd < tl)) {
         f.landedMl = f.rate * (now - f.landT);
         if (f.ml != null) f.landedMl = Math.min(f.landedMl, f.ml);
-        const p = posAt(f, tl);
-        if (now - f.lastFx > 0.07) {
+        if (now - f.lastFx > 0.08) {
           f.lastFx = now;
-          addRipple(p.x + (Math.random() - 0.5) * 8, 1.6, { tau: 0.9, speed: 95 });
-          splash(p.x, p.y, 0.4);
-          // 水柱扎进水里，带下去一串气泡
-          addBubble(p.x + (Math.random() - 0.5) * 12, p.y + 20 + Math.random() * 70);
-          if (Math.random() < 0.5) addBubble(p.x + (Math.random() - 0.5) * 8, p.y + 10 + Math.random() * 30, 1 + Math.random());
+          const y = headY(f, tl);
+          addRipple(f.x0 + (Math.random() - 0.5) * 8, 1.8, { tau: 0.9, speed: 95 });
+          splash(f.x0, y, 0.4);
+          addBubble(f.x0 + (Math.random() - 0.5) * 12, y + 15 + Math.random() * 60);
         }
       }
       if (f.tEnd != null && f.landT != null && now - f.tEnd >= tl) {
@@ -226,8 +223,8 @@
   function targetLevel() {
     let ml = stateMl;
     for (const f of flights) {
-      if (f.ml != null) ml -= f.ml - f.landedMl;  // 已记账、还没落进水里
-      else ml += f.landedMl;                      // 还在倒、已落进水里
+      if (f.ml != null) ml -= f.ml - f.landedMl;
+      else ml += f.landedMl;
     }
     return Math.max(0, Math.min(1, ml / settings.goalMl));
   }
@@ -255,17 +252,14 @@
     const sp = Math.hypot(cursor.vx, cursor.vy);
     const sy = surfaceAt(cursor.x);
     const dy = cursor.y - sy;
-    // 划过水面：荡开涟漪，划得快就溅起水花
     if (Math.abs(dy) < 18 && sp > 50 && now - lastCursorFx > 0.05) {
       lastCursorFx = now;
-      addRipple(cursor.x, clamp(sp / 260, 0.4, 3.4), { tau: 1.0, speed: 100 + Math.min(200, sp * 0.1), wl: 36 });
+      addRipple(cursor.x, clamp(sp / 230, 0.6, 4), { tau: 1.0, speed: 100 + Math.min(200, sp * 0.1), wl: 40 });
       if (sp > 650) splash(cursor.x, sy, clamp(sp / 1600, 0.3, 1));
     }
-    // 在水里移动：身后带出一串小气泡
-    if (dy > 18 && sp > 130 && now - lastWake > 0.045) {
+    if (dy > 18 && sp > 130 && now - lastWake > 0.05) {
       lastWake = now;
-      addBubble(cursor.x - cursor.vx * 0.03 + (Math.random() - 0.5) * 6,
-        cursor.y + (Math.random() - 0.5) * 6, 0.8 + Math.random() * 1.4);
+      addBubble(cursor.x - cursor.vx * 0.03 + (Math.random() - 0.5) * 6, cursor.y + (Math.random() - 0.5) * 6);
     }
   }
 
@@ -281,15 +275,15 @@
   ];
 
   function fishBand() {
-    const top = baseY + 34;
-    const bottom = Math.max(top + 30, floorY() + 14);
+    const top = baseY + 16;
+    const bottom = Math.max(top + 12, H - 14);
     return { top, bottom };
   }
 
   function spawnGroup(g) {
     const fromLeft = Math.random() < 0.5;
     const band = fishBand();
-    const y0 = band.top + (band.bottom - band.top) * (0.25 + Math.random() * 0.5);
+    const y0 = band.top + (band.bottom - band.top) * (0.2 + Math.random() * 0.4);
     const n = g.school || 1;
     const leader = makeFish(g.name, fromLeft, y0, null, 0);
     leader.group = g;
@@ -303,7 +297,7 @@
 
   function makeFish(name, fromLeft, y, leader, idx) {
     const sp = SP.SPECIES[name];
-    const off = leader ? { x: -14 - idx * 11 - Math.random() * 8, y: (idx % 2 ? -1 : 1) * (6 + idx * 4) } : null;
+    const off = leader ? { x: -14 - idx * 11 - Math.random() * 8, y: (idx % 2 ? -1 : 1) * (5 + idx * 3) } : null;
     return {
       name, sp, leader, off,
       frames: SP.frames(name),
@@ -313,14 +307,8 @@
       flip: fromLeft ? 1 : -1,
       speed: 0,
       tx: fromLeft ? 160 + Math.random() * W * 0.3 : W - 160 - Math.random() * W * 0.3,
-      ty: y,
-      wait: 0,
-      phase: Math.random() * 4,
-      bob: Math.random() * TAU,
-      mode: 'swim',
-      pecking: false,
-      fast: false,
-      seed: Math.random(),
+      ty: y, wait: 0, phase: Math.random() * 4, bob: Math.random() * TAU,
+      mode: 'swim', pecking: false, fast: false, seed: Math.random(),
     };
   }
 
@@ -330,8 +318,7 @@
 
   function leaveGroup(g, fast) {
     for (const f of fishes) {
-      if (g && f.group !== g) continue;
-      if (f.mode === 'leave') continue;
+      if ((g && f.group !== g) || f.mode === 'leave') continue;
       f.mode = 'leave';
       f.fast = !!fast;
       f.pecking = false;
@@ -344,9 +331,9 @@
   function pickTarget(f) {
     const band = fishBand();
     if (f.name !== 'minnow' && Math.random() < 0.18) {
-      f.pecking = true;               // 游到水面"啄"一下
+      f.pecking = true;
       f.tx = clamp(f.x + (Math.random() - 0.5) * 260, 60, W - 60);
-      f.ty = baseY + 10;
+      f.ty = baseY + 12;
       return;
     }
     f.pecking = false;
@@ -359,7 +346,6 @@
     const leaving = f.mode === 'leave';
     const band = fishBand();
 
-    // 鼠标在水里靠近：吓一跳，赶紧游开
     if (!leaving && cursorLive() && cursor.y > baseY + 10 && Math.hypot(f.x - cursor.x, f.y - cursor.y) < 110) {
       const away = Math.sign(f.x - cursor.x) || 1;
       if (!f.leader) {
@@ -374,7 +360,6 @@
     }
 
     if (f.leader && !leaving) {
-      // 跟着领头的游，保持一点队形
       const L = f.leader;
       f.tx = L.x + f.off.x * L.dir;
       f.ty = L.y + f.off.y + Math.sin(now * 1.3 + f.seed * 9) * 3;
@@ -382,7 +367,7 @@
     } else if (!leaving && !f.pecking) {
       f.ty = clamp(f.ty, band.top, band.bottom);
     }
-    if (f.pecking) f.ty = baseY + 10;
+    if (f.pecking) f.ty = baseY + 12;
 
     const dx = f.tx - f.x;
     const dy = f.ty - f.y;
@@ -400,13 +385,10 @@
       if (Math.abs(dx) > (f.leader ? 4 : 18)) f.dir = dx >= 0 ? 1 : -1;
     }
 
-    // 像素鱼转身：横向压扁再翻过去，不旋转
     f.flip += clamp(f.dir - f.flip, -dt * 6, dt * 6);
-
     f.x += f.flip * f.speed * dt;
-    const vy = clamp(dy * 1.2, -f.speed * 0.5, f.speed * 0.5);
-    f.y += vy * dt;
-    f.y = Math.max(f.y, baseY + 9);       // 始终在水面以下
+    f.y += clamp(dy * 1.2, -f.speed * 0.5, f.speed * 0.5) * dt;
+    f.y = clamp(f.y, baseY + 11, H - 8);
     f.phase += dt * (2.4 + f.speed * 0.12);
 
     if (leaving) {
@@ -415,11 +397,11 @@
     }
     if (!f.leader && dist < 14 && f.wait <= 0 && !(f.scared > now)) {
       if (f.pecking) {
-        addRipple(f.x + f.dir * 16, 1.6, { tau: 1.0, speed: 70, wl: 30 });
+        addRipple(f.x + f.dir * 16, 1.8, { tau: 1.0, speed: 70, wl: 30 });
         addBubble(f.x + f.dir * 14, f.y + 2, 1.4);
         f.pecking = false;
         f.tx = f.x + f.dir * 140;
-        f.ty = baseY + 70 + Math.random() * 90;
+        f.ty = baseY + 40 + Math.random() * 60;
         f.wait = 0.2;
       } else {
         f.wait = Math.random() * 2.4;
@@ -442,60 +424,33 @@
   }
 
   function drawFishes() {
-    ctx.imageSmoothingEnabled = false;
+    const deepRow = bandCRow();
     for (const f of fishes) {
-      const depth = f.y - baseY;
-      const tint = depth < 140 ? 0 : depth < 340 ? 1 : 2;
-      const img = f.frames[tint][Math.floor(f.phase) % 4];
-      const s = f.sp.scale;
-      const sx = Math.sign(f.flip || 1) * Math.max(0.1, Math.abs(f.flip));
       const bob = Math.sin(now * 1.6 + f.bob) * 1.2;
-      ctx.save();
-      ctx.translate(Math.round(f.x), Math.round(f.y + bob));
-      ctx.scale(sx * s, s);
-      ctx.drawImage(img, -img.width / 2, -img.height / 2);
-      ctx.restore();
+      const ly = Math.round((f.y + bob) / PX);
+      const im = f.frames[ly >= deepRow ? 1 : 0][Math.floor(f.phase) % 4];
+      const w = Math.max(1, Math.round(im.width * Math.abs(f.flip)));
+      const lx = Math.round(f.x / PX);
+      const top = ly - Math.floor(im.height / 2);
+      if (f.flip >= 0) {
+        ctx.drawImage(im, lx - (w >> 1), top, w, im.height);
+      } else {
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(im, -lx - (w >> 1), top, w, im.height);
+        ctx.restore();
+      }
     }
-    ctx.imageSmoothingEnabled = true;
   }
 
   // ---------- 满了 ----------
 
   function triggerFull() {
     fullFx = { t0: now + 0.45 };
-    addRipple(W / 2, 5, { delay: 0.45, speed: 190, wl: 240, tau: 3.4, w: 110, spread: 40 });
+    addRipple(W / 2, 6, { delay: 0.45, speed: 190, wl: 240, tau: 3.4, w: 110, spread: 40 });
   }
 
-  function drawSweep() {
-    if (!fullFx) return;
-    const p = (now - fullFx.t0 - 0.35) / 2.6;
-    if (p < 0) return;
-    if (p > 1) { fullFx = null; return; }
-    const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-    const x = -300 + e * (W + 600);
-    const g = ctx.createLinearGradient(x - 280, 0, x + 280, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.95)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    const glow = ctx.createLinearGradient(x - 220, 0, x + 220, 0);
-    glow.addColorStop(0, 'rgba(255,255,255,0)');
-    glow.addColorStop(0.5, 'rgba(255,255,255,0.2)');
-    glow.addColorStop(1, 'rgba(255,255,255,0)');
-    const i0 = Math.max(0, Math.floor((x - 300) / STEP));
-    const i1 = Math.min(ys.length - 1, Math.ceil((x + 300) / STEP));
-    if (i1 <= i0) return;
-    ctx.beginPath();
-    ctx.moveTo(i0 * STEP, ys[i0]);
-    for (let i = i0 + 1; i <= i1; i++) ctx.lineTo(i * STEP, ys[i]);
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = glow;
-    ctx.stroke();
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = g;
-    ctx.stroke();
-  }
-
-  // ---------- 蒸发：回到 Dock 上面那一汪浅水 ----------
+  // ---------- 蒸发：水退回屏幕底下，升起几缕像素水汽 ----------
 
   function startEvaporate(fromLevel) {
     evap = { t0: now, from: Math.max(level.x, fromLevel || 0) };
@@ -508,37 +463,17 @@
   function updateEvap(dt) {
     if (!evap) return;
     const p = now - evap.t0;
-    if (p > 0.5 && p < 3.4 && level.x > 0.002 && Math.random() < dt * 6) {
-      mists.push({
-        x: Math.random() * W, y: baseY - 4,
-        r: 40 + Math.random() * 60, age: 0, life: 2.6 + Math.random() * 1.2,
-        vy: -(12 + Math.random() * 14), vx: (Math.random() - 0.5) * 10,
-      });
+    if (p > 0.4 && p < 3.4 && level.x > 0.002 && Math.random() < dt * 14) {
+      steams.push({ x: Math.random() * W, y: baseY - 3, age: 0, life: 1.6 + Math.random() * 1.4, vy: -(18 + Math.random() * 16), sway: Math.random() * TAU });
     }
     const q = clamp((p - 1.1) / 2.9, 0, 1);
     const e = q < 0.5 ? 2 * q * q : 1 - Math.pow(-2 * q + 2, 2) / 2;
     level.x = evap.from * (1 - e);
     level.v = 0;
-    if (p > 4.0 && mists.length === 0) {
+    if (p > 4.0 && steams.length === 0) {
       evap = null;
       level.x = 0;
       lastTarget = targetLevel();
-    }
-  }
-
-  function drawMists(dt) {
-    for (let i = mists.length - 1; i >= 0; i--) {
-      const m = mists[i];
-      m.age += dt; m.y += m.vy * dt; m.x += m.vx * dt; m.r += dt * 10;
-      if (m.age >= m.life) { mists.splice(i, 1); continue; }
-      const a = 0.09 * Math.sin(Math.PI * m.age / m.life);
-      const g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
-      g.addColorStop(0, `rgba(236, 244, 248, ${a})`);
-      g.addColorStop(1, 'rgba(236, 244, 248, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.ellipse(m.x, m.y, m.r, m.r * 0.55, 0, 0, TAU);
-      ctx.fill();
     }
   }
 
@@ -554,172 +489,24 @@
       const t = audio.currentTime;
       const osc = audio.createOscillator();
       const gain = audio.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1150 + Math.random() * 200, t);
-      osc.frequency.exponentialRampToValueAtTime(420, t + 0.09);
+      osc.type = 'square';                       // 像素风：一点点 8-bit 的"嘀"
+      osc.frequency.setValueAtTime(880 + Math.random() * 120, t);
+      osc.frequency.exponentialRampToValueAtTime(440, t + 0.07);
       gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.06, t + 0.006);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      gain.gain.exponentialRampToValueAtTime(0.025, t + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
       osc.connect(gain).connect(audio.destination);
       osc.start(t);
-      osc.stop(t + 0.18);
+      osc.stop(t + 0.12);
     } catch (_) { /* 没有声音也没关系 */ }
   }
-
-  // ---------- WebGL 水体 ----------
-
-  const water3d = (() => {
-    const gl = glCanvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: false });
-    if (!gl) return { ok: false, resize() {}, draw() {}, clear() {} };
-
-    const VS = `#version 300 es
-      in vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
-    const FS = `#version 300 es
-      precision highp float;
-      uniform sampler2D uSurf;
-      uniform int uN;
-      uniform float uStep, uScale, uTime, uFloor;
-      uniform vec2 uRes;
-      out vec4 o;
-
-      float surfAt(float x) {
-        float f = x / uStep;
-        int i = clamp(int(floor(f)), 0, uN - 1);
-        int j = min(i + 1, uN - 1);
-        return mix(texelFetch(uSurf, ivec2(i, 0), 0).r, texelFetch(uSurf, ivec2(j, 0), 0).r, fract(f));
-      }
-
-      // 焦散：水面把阳光聚成一张会动的光网
-      float caustic(vec2 uv, float time) {
-        vec2 p = mod(uv * 6.28318, 6.28318) - 250.0;
-        vec2 i = p;
-        float c = 1.0;
-        float inten = 0.005;
-        for (int n = 0; n < 5; n++) {
-          float t = time * (1.0 - (3.5 / float(n + 1)));
-          i = p + vec2(cos(t - i.x) + sin(t + i.y), sin(t - i.y) + cos(t + i.x));
-          c += 1.0 / length(vec2(p.x / (sin(i.x + t) / inten), p.y / (cos(i.y + t) / inten)));
-        }
-        c /= 5.0;
-        c = 1.17 - pow(c, 1.4);
-        return clamp(pow(abs(c), 8.0), 0.0, 1.0);
-      }
-
-      void main() {
-        vec2 px = vec2(gl_FragCoord.x, uRes.y * uScale - gl_FragCoord.y) / uScale;
-        float s = surfAt(px.x);
-        float d = px.y - s;
-        if (d < -1.5) discard;
-
-        float edge = smoothstep(-1.0, 1.0, d);
-        float depth = 1.0 - exp(-d / 560.0);
-
-        // 越深越蓝、越暗
-        vec3 shallow = vec3(0.56, 0.80, 0.86);
-        vec3 deep = vec3(0.07, 0.28, 0.43);
-        vec3 col = mix(shallow, deep, depth);
-        float a = mix(0.20, 0.60, depth);
-
-        // 斜射下来的光柱，慢慢晃
-        float u = px.x + d * 0.38;
-        float r = (sin(u * 0.0105 + uTime * 0.19) * 0.5 + 0.5) * (sin(u * 0.0231 - uTime * 0.13 + 1.7) * 0.5 + 0.5);
-        r += (sin(u * 0.0047 + uTime * 0.07 + 0.4) * 0.5 + 0.5) * 0.35;
-        r = pow(r, 2.4) * smoothstep(0.0, 70.0, d) * exp(-d / 460.0);
-        col += vec3(0.78, 0.94, 1.0) * r * 0.42;
-        a += r * 0.10;
-
-        // 焦散光网：靠近水面更亮
-        float c = caustic(px / vec2(330.0, 260.0), uTime * 0.32);
-        float c2 = caustic(px / vec2(170.0, 140.0) + 3.1, uTime * 0.27);
-        float ck = (0.6 * exp(-d / 420.0) + 0.12) * smoothstep(0.0, 22.0, d);
-        float cc = (c * 0.75 + c2 * 0.35) * ck;
-        col += vec3(0.86, 0.98, 1.0) * cc;
-        a += cc * 0.28;
-
-        // 从水下看水面：一条银亮的反光带
-        float band = exp(-max(d, 0.0) / 5.0);
-        float band2 = exp(-max(d, 0.0) / 22.0);
-        col = mix(col, vec3(0.88, 0.96, 0.99), band * 0.6 + band2 * 0.12);
-        a += band * 0.22 + band2 * 0.04;
-
-        // 底部更沉一点
-        float bottom = smoothstep(uFloor - 40.0, uRes.y, px.y);
-        col *= 1.0 - bottom * 0.18;
-        a += bottom * 0.06;
-
-        a = clamp(a, 0.0, 0.86) * edge;
-        o = vec4(col * a, a);
-      }`;
-
-    function shader(type, src) {
-      const sh = gl.createShader(type);
-      gl.shaderSource(sh, src);
-      gl.compileShader(sh);
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(sh));
-      return sh;
-    }
-    const prog = gl.createProgram();
-    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
-    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.error(gl.getProgramInfoLog(prog));
-      return { ok: false, resize() {}, draw() {}, clear() {} };
-    }
-    gl.useProgram(prog);
-
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'p');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-    const tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    const U = {};
-    ['uSurf', 'uN', 'uStep', 'uScale', 'uTime', 'uFloor', 'uRes'].forEach((n) => { U[n] = gl.getUniformLocation(prog, n); });
-
-    // 水体很柔，按 1 倍分辨率渲染就够，省电
-    const SCALE = 1;
-
-    return {
-      ok: true,
-      resize() {
-        glCanvas.width = Math.round(W * SCALE);
-        glCanvas.height = Math.round(H * SCALE);
-        gl.viewport(0, 0, glCanvas.width, glCanvas.height);
-      },
-      clear() {
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-      },
-      draw() {
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, ys.length, 1, 0, gl.RED, gl.FLOAT, ys);
-        gl.uniform1i(U.uSurf, 0);
-        gl.uniform1i(U.uN, ys.length);
-        gl.uniform1f(U.uStep, STEP);
-        gl.uniform1f(U.uScale, SCALE);
-        gl.uniform1f(U.uTime, now % 10000);
-        gl.uniform1f(U.uFloor, floorY());
-        gl.uniform2f(U.uRes, W, H);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-      },
-    };
-  })();
 
   // ---------- 每帧 ----------
 
   function isBusy() {
-    return flights.length || ripples.length || drops.length || mists.length || evap || fullFx || cursorLive()
-      || Math.abs(level.v) > 1e-4 || Math.abs(targetLevel() - level.x) > 1e-4;
+    return flights.length || drops.length || steams.length || evap || fullFx || cursorLive()
+      || Math.abs(level.v) > 1e-4 || Math.abs(targetLevel() - level.x) > 1e-4
+      || ripples.some((r) => now - r.t0 < r.tau * 2);
   }
 
   function update(dt) {
@@ -732,7 +519,7 @@
     if (evap) {
       updateEvap(dt);
     } else {
-      const k = 30, c = 2 * Math.sqrt(k) * 0.66;   // 有一点弹性
+      const k = 30, c = 2 * Math.sqrt(k) * 0.66;
       for (let i = 0; i < 2; i++) {
         const h = dt / 2;
         const a = k * (target - level.x) - c * level.v;
@@ -746,9 +533,10 @@
     }
 
     baseY = levelToY(clamp(level.x, 0, 1.004));
+    const amp = clamp(level.x * 10, 0.3, 1);
     for (let i = 0; i < ys.length; i++) {
       const x = i * STEP;
-      ys[i] = baseY + wave(x, now) + rippleAt(x, now);
+      ys[i] = baseY + wave(x, now) * amp + rippleAt(x, now);
     }
     for (let i = ripples.length - 1; i >= 0; i--) {
       if (now - ripples[i].t0 > ripples[i].tau * 4.5) ripples.splice(i, 1);
@@ -757,122 +545,144 @@
     for (let i = drops.length - 1; i >= 0; i--) {
       const d = drops[i];
       d.age += dt; d.vy += 1500 * dt; d.x += d.vx * dt; d.y += d.vy * dt;
-      if ((d.vy > 0 && d.y > surfaceAt(d.x) + 1) || d.age > 1.5) drops.splice(i, 1);
+      if ((d.vy > 0 && d.y > surfaceAt(d.x) + 2) || d.age > 1.5) drops.splice(i, 1);
     }
 
     for (let i = bubbles.length - 1; i >= 0; i--) {
       const b = bubbles[i];
-      b.vy += (-(32 + b.r * 16) - b.vy) * Math.min(1, dt * 2);
+      b.vy += (-(30 + b.r * 14) - b.vy) * Math.min(1, dt * 2);
       b.ph += dt * (3 + b.r);
       b.x += Math.sin(b.ph) * b.wob * dt * 20;
       b.y += b.vy * dt;
-      if (b.y - b.r <= surfaceAt(b.x) + 1) {
-        if (b.r > 1.8) addRipple(b.x, 0.5, { tau: 0.6, speed: 60, wl: 18, w: 8 });
+      if (b.y - b.r * PX <= surfaceAt(b.x) + PX) {
+        if (b.r > 1.8) addRipple(b.x, 0.8, { tau: 0.6, speed: 60, wl: 18, w: 8 });
         bubbles.splice(i, 1);
       }
     }
-    // 偶尔从底下冒一个泡，水一直是活的
-    if (now > nextAmbientBubble) {
+    if (level.x > 0.03 && now > nextAmbientBubble) {
       nextAmbientBubble = now + 2.5 + Math.random() * 5;
-      addBubble(Math.random() * W, H - 10 - Math.random() * 40);
+      addBubble(Math.random() * W, H - 6 - Math.random() * 30);
     }
 
-    for (const m of motes) {
-      m.ph += dt * 0.4;
-      m.x += (m.vx + Math.sin(m.ph) * 2) * dt;
-      m.y += (m.vy + Math.cos(m.ph * 0.7) * 1.5) * dt;
-      if (m.x < -5) m.x = W + 5; else if (m.x > W + 5) m.x = -5;
-      if (m.y > H + 5) m.y = baseY + 20;
-      if (m.y < baseY + 6) m.y = H;
+    for (let i = steams.length - 1; i >= 0; i--) {
+      const s = steams[i];
+      s.age += dt; s.y += s.vy * dt; s.sway += dt * 2;
+      if (s.age > s.life) steams.splice(i, 1);
     }
 
     updateCursor();
     updateFishes(dt);
-  }
-
-  function strokeSurface() {
-    ctx.beginPath();
-    ctx.moveTo(0, ys[0]);
-    for (let i = 1; i < ys.length; i++) ctx.lineTo(i * STEP, ys[i]);
-  }
-
-  function draw(dt) {
-    ctx.clearRect(0, 0, W, H);
-    if (water3d.ok) water3d.draw();
-    else drawFallbackBody();
-
-    drawMotes();
-    drawFishes();
-    drawBubbles();
-
-    // 水面亮线：一道细细的反光，亮度沿着水面慢慢游走
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.save();
-    ctx.translate(0, -1.4);
-    strokeSurface();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.10)';
-    ctx.stroke();
-    ctx.restore();
-
-    strokeSurface();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-    ctx.stroke();
-
-    const shimmer = ctx.createLinearGradient(0, 0, W, 0);
-    const n = 11;
-    for (let i = 0; i <= n; i++) {
-      const a = 0.55 + 0.25 * Math.sin(i * 1.7 + now * 0.33) + 0.12 * Math.sin(i * 0.63 - now * 0.21);
-      shimmer.addColorStop(i / n, `rgba(255, 255, 255, ${a.toFixed(3)})`);
+    for (const h of highlights) {
+      h.u += h.speed * dt;
+      if (h.u < -0.02) h.u += 1.04; else if (h.u > 1.02) h.u -= 1.04;
     }
-    ctx.lineWidth = 1.3;
-    ctx.strokeStyle = shimmer;
-    ctx.stroke();
-
-    drawSweep();
-    drawFlights();
-    drawDrops();
-    drawMists(dt);
   }
 
-  function drawFallbackBody() {
-    ctx.beginPath();
-    ctx.moveTo(0, H + 20);
-    for (let i = 0; i < ys.length; i++) ctx.lineTo(i * STEP, ys[i]);
-    ctx.lineTo(W, H + 20);
-    ctx.closePath();
-    const g = ctx.createLinearGradient(0, baseY, 0, H);
-    g.addColorStop(0, 'rgba(150, 205, 220, 0.25)');
-    g.addColorStop(1, 'rgba(30, 90, 130, 0.55)');
-    ctx.fillStyle = g;
-    ctx.fill();
+  function bandCRow() {
+    const depth = Math.max(0, H - baseY);
+    return Math.round((baseY + Math.max(BAND_A_ROWS * PX + 9, depth * BAND_C_FROM)) / PX);
   }
 
-  function drawMotes() {
-    ctx.fillStyle = 'rgba(230, 245, 250, 1)';
-    for (const m of motes) {
-      if (m.y < baseY + 8) continue;
-      ctx.globalAlpha = m.a * (0.6 + 0.4 * Math.sin(m.ph * 2));
-      ctx.fillRect(m.x, m.y, m.r, m.r);
+  // 每一列从水面往下：浅色线 → 第 1 层 → 第 2 层 → 第 3 层
+  function paintWater() {
+    buf.fill(0);
+    const cRow = bandCRow();
+    const surf = new Int32Array(LW);
+    for (let cx = 0; cx < LW; cx++) {
+      const sy = Math.round(surfaceAt(cx * PX + PX / 2) / PX);
+      surf[cx] = sy;
+      if (sy >= LH) continue;
+      const y0 = Math.max(0, sy);
+      for (let y = y0; y < LH; y++) {
+        let col;
+        if (y === sy) col = C.line;
+        else if (y <= sy + BAND_A_ROWS) col = C.bandA;
+        else if (y < cRow) col = C.bandB;
+        else if (y === cRow) col = (cx & 1) ? C.bandB : C.bandC;   // 一行棋盘格过渡
+        else col = C.bandC;
+        buf[y * LW + cx] = col;
+      }
+      // 水面线比左右邻居高出一格时，补一格台阶，线才是连着的
+      if (cx > 0) {
+        const a = surf[cx - 1], b = sy;
+        if (a < LH && Math.abs(a - b) > 1) {
+          const top = Math.min(a, b), bot = Math.max(a, b);
+          const col = a < b ? cx : cx - 1;
+          for (let y = top + 1; y < bot; y++) if (y >= 0 && y < LH) buf[y * LW + col] = C.line;
+        }
+      }
     }
-    ctx.globalAlpha = 1;
+
+    // 白色高光：几小段，沿着水面慢慢漂
+    for (const h of highlights) {
+      const cx0 = Math.floor(h.u * LW);
+      const blink = Math.sin(now * 1.3 + h.ph) > -0.6;
+      if (!blink) continue;
+      for (let k = 0; k < h.len; k++) {
+        const cx = cx0 + k;
+        if (cx < 0 || cx >= LW) continue;
+        const y = surf[cx];
+        if (y >= 0 && y < LH) buf[y * LW + cx] = C.hi;
+      }
+    }
+
+    // 满了：一道白光沿水面从左扫到右
+    if (fullFx) {
+      const p = (now - fullFx.t0 - 0.35) / 2.6;
+      if (p > 1) fullFx = null;
+      else if (p >= 0) {
+        const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+        const mid = Math.round(-20 + e * (LW + 40));
+        for (let cx = mid - 14; cx <= mid + 14; cx++) {
+          if (cx < 0 || cx >= LW) continue;
+          if (Math.abs(cx - mid) > 8 && (cx & 1)) continue;   // 两头稀一点
+          const y = surf[cx];
+          if (y >= 0 && y < LH) buf[y * LW + cx] = C.hi;
+          if (Math.abs(cx - mid) < 4 && y + 1 < LH) buf[(y + 1) * LW + cx] = C.line;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  function px(x, y, w = 1, h = 1) {
+    ctx.fillRect(Math.round(x), Math.round(y), w, h);
   }
 
   function drawBubbles() {
+    ctx.fillStyle = C.bubble;
     for (const b of bubbles) {
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, TAU);
-      ctx.fillStyle = 'rgba(210, 238, 248, 0.14)';
-      ctx.fill();
-      ctx.lineWidth = 0.8;
-      ctx.strokeStyle = 'rgba(240, 250, 255, 0.55)';
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(b.x - b.r * 0.35, b.y - b.r * 0.35, Math.max(0.5, b.r * 0.3), 0, TAU);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.fill();
+      const x = Math.round(b.x / PX), y = Math.round(b.y / PX);
+      if (b.r < 1.6) {
+        px(x, y);
+      } else if (b.r < 2.6) {                     // 小圈
+        px(x, y - 1); px(x - 1, y); px(x + 1, y); px(x, y + 1);
+      } else {                                    // 大圈 + 一颗高光
+        px(x - 1, y - 2, 2, 1); px(x - 1, y + 1, 2, 1);
+        px(x - 2, y - 1, 1, 2); px(x + 1, y - 1, 1, 2);
+        ctx.fillStyle = '#ffffff';
+        px(x - 1, y - 1);
+        ctx.fillStyle = C.bubble;
+      }
+    }
+  }
+
+  function drawDrops() {
+    ctx.fillStyle = C.foam;
+    for (const d of drops) px(d.x / PX, d.y / PX);
+  }
+
+  function drawSteam() {
+    ctx.fillStyle = C.steam;
+    for (const s of steams) {
+      const k = s.age / s.life;
+      // 一缕水汽：几颗像素，越往上越稀，最后一闪一闪地没了
+      if (k > 0.6 && (Math.floor(now * 12 + s.sway) & 1)) continue;
+      const x = s.x / PX + Math.sin(s.sway) * 1.2;
+      const y = s.y / PX;
+      px(x, y);
+      if (k < 0.5) px(x + 1, y + 2);
+      if (k < 0.3) px(x - 1, y + 4);
     }
   }
 
@@ -881,64 +691,35 @@
       const headTau = Math.min(now - f.tStart, f.tl);
       const tailTau = f.tEnd == null ? 0 : Math.max(0, now - f.tEnd);
       if (tailTau >= headTau) continue;
-      const b = posAt(f, headTau);
-
+      const lx = Math.round(f.x0 / PX);
+      const yTop = Math.round(headY(f, tailTau) / PX);
+      const yBot = Math.round(headY(f, headTau) / PX);
       if (f.kind === 'drop') {
-        const a = posAt(f, tailTau);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y - 10);
-        ctx.lineTo(b.x, b.y);
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, 2.2, 0, TAU);
-        ctx.fillStyle = 'rgba(214, 236, 245, 0.8)';
-        ctx.fill();
-        ctx.lineWidth = 0.8;
-        ctx.strokeStyle = 'rgba(70, 110, 130, 0.3)';
-        ctx.stroke();
+        ctx.fillStyle = C.streamB;
+        px(lx, yBot - 1, 1, 2);
+        ctx.fillStyle = C.streamA;
+        px(lx, yBot - 1);
         continue;
       }
-
-      // 水柱：外面一层淡淡的水，中间一道亮芯，越往下越细、越抖
-      const N = 22;
-      const pts = [];
-      for (let i = 0; i <= N; i++) {
-        const tau = tailTau + (headTau - tailTau) * (i / N);
-        const p = posAt(f, tau);
-        const fall = tau / Math.max(0.05, f.tl);
-        p.x += Math.sin(tau * 38 + now * 22) * (0.2 + fall * 0.9);
-        pts.push(p);
+      // 两格宽的水柱：左边亮、右边浅蓝；越往下偶尔抖一格
+      for (let y = yTop; y <= yBot; y++) {
+        const fall = (y - yTop) / Math.max(1, yBot - yTop);
+        const jit = fall > 0.6 && ((y + Math.floor(now * 20)) % 7 === 0) ? -1 : 0;
+        ctx.fillStyle = C.streamA;
+        px(lx - 1 + jit, y);
+        ctx.fillStyle = C.streamB;
+        px(lx + jit, y);
       }
-      const trace = (dx) => {
-        ctx.beginPath();
-        pts.forEach((p, i) => (i ? ctx.lineTo(p.x + dx, p.y) : ctx.moveTo(p.x + dx, p.y)));
-      };
-      const thick = f.kind === 'stream' ? 4.2 : 2.6;
-      trace(0);
-      ctx.lineWidth = thick + 2;
-      ctx.strokeStyle = 'rgba(50, 100, 125, 0.16)';
-      ctx.stroke();
-      ctx.lineWidth = thick;
-      ctx.strokeStyle = 'rgba(200, 230, 242, 0.62)';
-      ctx.stroke();
-      trace(-thick * 0.18);
-      ctx.lineWidth = Math.max(0.8, thick * 0.3);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.stroke();
     }
   }
 
-  function drawDrops() {
-    if (!drops.length) return;
-    ctx.beginPath();
-    for (const d of drops) {
-      ctx.moveTo(d.x + d.r, d.y);
-      ctx.arc(d.x, d.y, d.r, 0, TAU);
-    }
-    ctx.fillStyle = 'rgba(240, 249, 252, 0.75)';
-    ctx.fill();
+  function draw() {
+    paintWater();
+    drawFishes();
+    drawBubbles();
+    drawFlights();
+    drawDrops();
+    drawSteam();
   }
 
   function frame(ms) {
@@ -951,7 +732,7 @@
     lastDraw = t;
     now = t;
     update(dt);
-    draw(dt);
+    draw();
   }
 
   // ---------- 消息 ----------
@@ -964,7 +745,7 @@
   function applyGeometry(g) {
     if (!g) return;
     if (Number.isFinite(g.menuBar)) menuBar = g.menuBar;
-    dockTop = Number.isFinite(g.dockTop) ? g.dockTop : null;
+    if (Number.isFinite(g.fullRatio) && g.fullRatio > 0) FULL_RATIO = g.fullRatio;
   }
 
   api.on('state', applyState);
@@ -978,7 +759,6 @@
 
   api.on('cursor', setCursor);
 
-  // 倒水时拖着杯子走：水柱的出口跟着挪
   api.on('stream-move', (d) => {
     for (const f of flights) {
       if (f.kind === 'stream' && f.tEnd == null) { f.x0 = d.from.x; f.y0 = d.from.y; }
@@ -997,7 +777,7 @@
 
   api.on('hidden', (h) => {
     paused = !!h;
-    if (h) { ctx.clearRect(0, 0, W, H); water3d.clear(); }
+    if (h) ctx.clearRect(0, 0, LW, LH);
   });
   api.on('geometry', (g) => { applyGeometry(g); resize(); });
 
@@ -1018,6 +798,7 @@
   requestAnimationFrame(frame);
 
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function rgb(r, g, b) { return (0xff << 24 | b << 16 | g << 8 | r) >>> 0; }
 
   // ---------- 预览模式：直接在浏览器里打开时使用 ----------
 
@@ -1037,7 +818,7 @@
       <div class="dock"></div>
       <div class="help">0–4 水位 · S 菜单栏一口 · 按住 H 倒水（一直按一直倒） · U 撤回 · F 倒满 · E 蒸发</div>`);
 
-    const cupFrom = () => ({ x: window.innerWidth - 74, y: 25 + 22 });
+    const cupFrom = () => ({ x: Math.round((window.innerWidth - 60) / PX) * PX, y: 25 + 60 });
     const drink = (kind, ml, from) => {
       total += ml;
       emit('drink', { kind, ml, from, totalMl: total, settings: s });
@@ -1079,7 +860,7 @@
         if (ch === 'water-ready') {
           return Promise.resolve({
             totalMl: 0, settings: s, hidden: false,
-            geometry: { menuBar: 25, dockTop: window.innerHeight - 70 },
+            geometry: { menuBar: 25, fullRatio: 1 / 3 },
           });
         }
         return Promise.resolve(null);
