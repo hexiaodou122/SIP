@@ -4,6 +4,9 @@ const {
   app, BrowserWindow, Tray, Menu, screen, ipcMain, powerMonitor, nativeImage, globalShortcut,
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const readline = require('readline');
+const { spawn } = require('child_process');
 const store = require('./store');
 
 const DEV = process.env.SIP_DEV === '1';
@@ -14,6 +17,10 @@ const CUP_LEAVE_MS = 600;      // 离开多久收回杯子
 const POLL_MS = 40;
 const POUR_RATE = 200;         // 按住杯子时每秒倒多少 ml（一直按一直倒）
 const POUR_MAX_SEC = 30;
+const SUMMON_HOLD_MS = 280;    // 在桌面上按住这么久：杯子出现并直接开始倒
+const DRAG_CANCEL_PX = 6;      // 按下后挪动超过这么多：当作框选/拖图标，不出杯子
+const HERE_LEAVE_MS = 1200;    // 点出来的杯子，鼠标离开多久收起
+const CUP_ANCHOR = { x: 66, y: 42 }; // 杯身中心在杯子窗口里的位置
 const CUP_WIN = { width: 120, height: 120 };
 
 let data = null;
@@ -311,24 +318,49 @@ function createTray() {
   tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
 }
 
-// ---------- 右上角热区 + Dock 变淡 ----------
+// ---------- 杯子：右上角热区 / 点桌面召唤 ----------
 
 let cornerSince = null;
 let leaveSince = null;
 let cupShown = false;
 let cupBusy = false;
+let cupMode = 'corner';
+let lastSpout = null;          // 出水口在杯子窗口里的位置
 
 function inside(p, r) {
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
 }
 
-function showCup() {
-  if (cupShown || !alive(cupWin)) return;
+// 水面现在的高度（屏幕坐标），和水窗口里的算法一致
+function waterSurfaceY() {
+  const d = display();
+  const g = geometry();
+  const floor = (g.dockTop != null ? g.dockTop : d.bounds.height - 70) - 30;
+  const top = g.menuBar + 8;
+  return d.bounds.y + floor - progress() * (floor - top);
+}
+
+// 点出来的杯子：杯身在鼠标下面；如果点在水里，杯子浮到水面上方
+function hereBounds(p) {
+  const d = display();
+  let x = Math.round(p.x - CUP_ANCHOR.x);
+  let y = Math.round(p.y - CUP_ANCHOR.y);
+  const surface = waterSurfaceY();
+  if (y + 74 > surface - 6) y = Math.round(surface - 80);
+  x = Math.max(d.bounds.x, Math.min(d.bounds.x + d.bounds.width - CUP_WIN.width, x));
+  y = Math.max(d.workArea.y, y);
+  return { x, y, width: CUP_WIN.width, height: CUP_WIN.height };
+}
+
+function showCup(mode = 'corner', at = null, pour = false) {
+  if (!alive(cupWin) || cupBusy) return;
+  if (cupShown && mode === 'corner') return;
   cupShown = true;
+  cupMode = mode;
   leaveSince = null;
-  cupWin.setBounds(cupBounds());
+  cupWin.setBounds(mode === 'here' && at ? hereBounds(at) : cupBounds());
   cupWin.setIgnoreMouseEvents(false);
-  cupWin.webContents.send('cup-show');
+  cupWin.webContents.send('cup-show', { mode, pour });
 }
 
 function hideCup() {
@@ -355,21 +387,117 @@ function poll() {
   const inCorner = inside(p, corner);
   const usable = data.settings && !data.today.hidden;
 
-  if (!cupShown) {
-    if (inCorner && usable) {
+  if (!cupShown || cupMode === 'here') {
+    if (inCorner && usable && !cupBusy && !mouse.pouring) {
       if (cornerSince == null) cornerSince = now;
-      if (now - cornerSince >= CORNER_DWELL_MS) showCup();
+      if (now - cornerSince >= CORNER_DWELL_MS) showCup('corner');
     } else {
       cornerSince = null;
     }
-  } else {
+  }
+  if (cupShown) {
     const pinned = DEV && process.env.SIP_PIN_CUP === '1'; // 调试：杯子一直放着
-    const stay = pinned || inCorner || inside(p, cupWin.getBounds()) || cupBusy;
+    const stay = pinned || (cupMode === 'corner' && inCorner) || inside(p, cupWin.getBounds()) || cupBusy || mouse.pouring;
     if (stay) {
       leaveSince = null;
     } else {
       if (leaveSince == null) leaveSince = now;
-      if (now - leaveSince >= CUP_LEAVE_MS) hideCup();
+      if (now - leaveSince >= (cupMode === 'here' ? HERE_LEAVE_MS : CUP_LEAVE_MS)) hideCup();
+    }
+  }
+}
+
+// ---------- 鼠标小助手：点桌面出杯子、划水 ----------
+
+let helper = null;
+let quitting = false;
+const mouse = { down: null, pouring: false, cursorSent: false };
+
+function helperPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'bin', 'sip-mouse')
+    : path.join(__dirname, '../bin/sip-mouse');
+}
+
+function startMouseHelper() {
+  const bin = helperPath();
+  if (!fs.existsSync(bin)) {
+    console.warn('[sip] 没有鼠标小助手，点桌面出杯子、划水暂不可用');
+    return;
+  }
+  helper = spawn(bin, [], { stdio: ['ignore', 'pipe', 'ignore'] });
+  readline.createInterface({ input: helper.stdout }).on('line', (line) => {
+    try { onMouse(JSON.parse(line)); } catch (_) { /* 忽略坏行 */ }
+  });
+  helper.on('exit', () => {
+    helper = null;
+    if (!quitting) setTimeout(startMouseHelper, 3000);
+  });
+}
+
+// 菜单栏、Dock 上的点击不算点桌面
+function inSystemArea(p) {
+  const d = display();
+  const g = geometry();
+  if (p.y < d.workArea.y) return true;
+  const bottom = g.dockTop != null ? d.bounds.y + g.dockTop : d.bounds.y + d.bounds.height - 80;
+  return p.y >= bottom;
+}
+
+function onMouse(ev) {
+  if (!data) return;
+  const p = { x: ev.x, y: ev.y };
+  const db = display().bounds;
+  const usable = data.settings && !data.today.hidden;
+  const onDesk = !!ev.desk && !inSystemArea(p);
+
+  if (ev.t === 'move' || ev.t === 'drag') {
+    // 划水：只在看得见水的地方
+    if (onDesk && usable) {
+      sendWater('cursor', { x: p.x - db.x, y: p.y - db.y });
+      mouse.cursorSent = true;
+    } else if (mouse.cursorSent) {
+      sendWater('cursor', null);
+      mouse.cursorSent = false;
+    }
+    if (ev.t === 'drag' && mouse.down) {
+      const moved = Math.hypot(p.x - mouse.down.x, p.y - mouse.down.y);
+      if (mouse.pouring) {
+        // 倒水时拖动：杯子跟着走，水柱跟着挪
+        cupWin.setBounds(hereBounds(p));
+        if (lastSpout) sendWater('stream-move', { from: toWaterPoint(cupWin, lastSpout) });
+      } else if (moved > DRAG_CANCEL_PX) {
+        clearTimeout(mouse.down.timer);
+        mouse.down.cancelled = true;
+      }
+    }
+    return;
+  }
+
+  if (ev.t === 'down') {
+    const onCup = cupShown && inside(p, cupWin.getBounds());
+    if (!usable || !onDesk || onCup || cupBusy) return;
+    mouse.down = { x: p.x, y: p.y, cancelled: false };
+    mouse.down.timer = setTimeout(() => {
+      if (!mouse.down || mouse.down.cancelled) return;
+      mouse.pouring = true;
+      cupBusy = false;
+      showCup('here', p, true);
+    }, SUMMON_HOLD_MS);
+    return;
+  }
+
+  if (ev.t === 'up') {
+    const down = mouse.down;
+    mouse.down = null;
+    if (!down) return;
+    clearTimeout(down.timer);
+    if (mouse.pouring) {
+      mouse.pouring = false;
+      if (alive(cupWin)) cupWin.webContents.send('cup-release');
+    } else if (!down.cancelled) {
+      // 轻点桌面：杯子出现在这里，等你按住它倒水
+      showCup('here', { x: down.x, y: down.y }, false);
     }
   }
 }
@@ -425,7 +553,7 @@ function registerDevShortcuts() {
   });
   globalShortcut.register('Control+Alt+F', devFill);
   globalShortcut.register('Control+Alt+E', devEvaporate);
-  globalShortcut.register('Control+Alt+C', showCup);
+  globalShortcut.register('Control+Alt+C', () => showCup('corner'));
 }
 
 // ---------- IPC ----------
@@ -457,6 +585,7 @@ function setupIpc() {
   ipcMain.on('pour-start', (_e, { spout }) => {
     if (!data.settings) return;
     cupBusy = true;
+    lastSpout = spout;
     sendWater('stream-start', { from: toWaterPoint(cupWin, spout), rate: POUR_RATE });
   });
 
@@ -526,8 +655,9 @@ app.whenReady().then(() => {
   screen.on('display-added', onDisplayChange);
   screen.on('display-removed', onDisplayChange);
 
+  startMouseHelper();
   if (DEV) registerDevShortcuts();
-  if (DEV && process.env.SIP_PIN_CUP === '1') setTimeout(showCup, 1500);
+  if (DEV && process.env.SIP_PIN_CUP === '1') setTimeout(() => showCup('corner'), 1500);
 });
 
 app.on('second-instance', () => {
@@ -537,4 +667,8 @@ app.on('second-instance', () => {
 
 // 关掉设置窗口不退出
 app.on('window-all-closed', () => {});
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  quitting = true;
+  globalShortcut.unregisterAll();
+  if (helper) helper.kill();
+});

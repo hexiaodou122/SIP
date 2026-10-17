@@ -6,10 +6,14 @@
   "main": "main/main.js",
   "private": true,
   "scripts": {
+    "prestart": "node scripts/build-helper.js",
     "start": "electron .",
+    "predev": "node scripts/build-helper.js",
     "dev": "SIP_DEV=1 electron .",
     "preview": "node scripts/preview.js",
+    "helper": "node scripts/build-helper.js",
     "icons": "node scripts/make-tray-icons.js",
+    "predist": "node scripts/build-helper.js",
     "dist": "electron-builder --mac dmg"
   },
   "build": {
@@ -27,6 +31,12 @@
       "renderer/**",
       "assets/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin/sip-mouse",
+        "to": "bin/sip-mouse"
+      }
     ]
   },
   "devDependencies": {

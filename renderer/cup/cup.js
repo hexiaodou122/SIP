@@ -34,6 +34,8 @@
   const drop = spring(HIDDEN_Y, 280, 24);
   const tilt = spring(0, 190, 17);
   const level = spring(WATER_FULL, 60, 13);
+  const pop = spring(1, 320, 22);   // 点出来的杯子：从小到大"冒"出来
+  let mode = 'corner';
 
   let shown = false;
   let pressAt = null;
@@ -43,7 +45,9 @@
   let last = 0;
 
   function render() {
-    hanger.style.transform = `translateY(${drop.x.toFixed(2)}px)`;
+    const sc = 0.55 + 0.45 * Math.max(0, pop.x);
+    hanger.style.transform = `translateY(${drop.x.toFixed(2)}px) scale(${sc.toFixed(3)})`;
+    hanger.style.opacity = Math.max(0, Math.min(1, pop.x)).toFixed(3);
     glass.style.transform = `rotate(${tilt.x.toFixed(2)}deg)`;
     // 杯子歪了，杯里的水面依然是平的
     water.setAttribute('transform',
@@ -62,13 +66,13 @@
       if (held * 1000 > MAX_POUR_MS) release();
     }
 
-    const moving = [stepSpring(drop, dt), stepSpring(tilt, dt), stepSpring(level, dt)].some(Boolean);
+    const moving = [stepSpring(drop, dt), stepSpring(tilt, dt), stepSpring(level, dt), stepSpring(pop, dt)].some(Boolean);
     render();
     if (moving || pressAt != null) {
       requestAnimationFrame(tick);
     } else {
       running = false;
-      if (!shown && drop.t === HIDDEN_Y) api.send('cup-retracted');
+      if (!shown) api.send('cup-retracted');
     }
   }
 
@@ -95,6 +99,10 @@
   hit.addEventListener('pointerdown', (e) => {
     if (!shown || e.button !== 0 || pressAt != null) return;
     hit.setPointerCapture(e.pointerId);
+    startPour();
+  });
+
+  function startPour() {
     pressAt = performance.now();
     pourSent = false;
     setBusy(true);
@@ -107,7 +115,7 @@
       pourSent = true;
       api.send('pour-start', { spout: spoutPoint() });
     }, 70);
-  });
+  }
 
   function release() {
     if (pressAt == null) return;
@@ -125,16 +133,31 @@
   hit.addEventListener('lostpointercapture', release);
 
   // ---------- 降下 / 收回 ----------
-  api.on('cup-show', () => {
+  api.on('cup-show', (o) => {
+    const opts = o || {};
+    mode = opts.mode || 'corner';
     shown = true;
-    drop.t = 0;
+    if (mode === 'here') {
+      // 在点的地方冒出来，轻轻落一下
+      drop.x = -12; drop.v = 0; drop.t = 0;
+      pop.x = 0; pop.v = 0; pop.t = 1;
+    } else {
+      if (pop.x < 0.05) { drop.x = HIDDEN_Y; drop.v = 0; } // 刚才是点出来的杯子，已经消失
+      pop.x = 1; pop.v = 0; pop.t = 1;
+      drop.t = 0;
+    }
+    if (opts.pour && pressAt == null) startPour();
     kick();
   });
+
+  // 在桌面上按住倒水时，松手由主进程告诉杯子
+  api.on('cup-release', () => release());
 
   api.on('cup-hide', () => {
     shown = false;
     release();
-    drop.t = HIDDEN_Y;
+    if (mode === 'here') { pop.t = 0; drop.t = -16; } // 淡出时轻轻往上收
+    else drop.t = HIDDEN_Y;
     level.t = WATER_FULL;
     kick();
   });
@@ -152,7 +175,7 @@
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Space') return;
       on = !on;
-      (handlers[on ? 'cup-show' : 'cup-hide'] || []).forEach((f) => f());
+      (handlers[on ? 'cup-show' : 'cup-hide'] || []).forEach((f) => f({ mode: 'corner' }));
     });
     return {
       on(ch, cb) { (handlers[ch] = handlers[ch] || []).push(cb); },

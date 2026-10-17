@@ -8,7 +8,7 @@ const SEND = [
 const INVOKE = ['water-ready', 'cup-ready', 'get-settings'];
 const ON = [
   'state', 'drink', 'stream-start', 'evaporate', 'geometry', 'hidden',
-  'cup-show', 'cup-hide',
+  'cup-show', 'cup-hide', 'cup-release', 'cursor', 'stream-move',
 ];
 
 contextBridge.exposeInMainWorld('sip', {

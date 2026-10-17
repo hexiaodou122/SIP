@@ -45,6 +45,11 @@
   let lastDraw = 0;
   let nextAmbientBubble = 0;
 
+  // 鼠标划水
+  let cursor = null;             // { x, y, vx, vy, t }
+  let lastCursorFx = 0;
+  let lastWake = 0;
+
   // ---------- 几何 ----------
 
   const topY = () => menuBar + 8;                         // 满了：水面在菜单栏下面一点
@@ -227,6 +232,43 @@
     return Math.max(0, Math.min(1, ml / settings.goalMl));
   }
 
+  // ---------- 鼠标划水 ----------
+
+  function setCursor(c) {
+    const t = performance.now() / 1000;
+    if (!c) { cursor = null; return; }
+    if (cursor && t - cursor.t < 0.25) {
+      const dt = Math.max(0.008, t - cursor.t);
+      cursor.vx = cursor.vx * 0.4 + ((c.x - cursor.x) / dt) * 0.6;
+      cursor.vy = cursor.vy * 0.4 + ((c.y - cursor.y) / dt) * 0.6;
+      cursor.x = c.x; cursor.y = c.y; cursor.t = t;
+    } else {
+      cursor = { x: c.x, y: c.y, vx: 0, vy: 0, t };
+    }
+  }
+
+  const cursorLive = () => cursor && now - cursor.t < 0.3;
+
+  function updateCursor() {
+    if (!cursor) return;
+    if (now - cursor.t > 0.12) { cursor.vx *= 0.5; cursor.vy *= 0.5; }
+    const sp = Math.hypot(cursor.vx, cursor.vy);
+    const sy = surfaceAt(cursor.x);
+    const dy = cursor.y - sy;
+    // 划过水面：荡开涟漪，划得快就溅起水花
+    if (Math.abs(dy) < 18 && sp > 50 && now - lastCursorFx > 0.05) {
+      lastCursorFx = now;
+      addRipple(cursor.x, clamp(sp / 260, 0.4, 3.4), { tau: 1.0, speed: 100 + Math.min(200, sp * 0.1), wl: 36 });
+      if (sp > 650) splash(cursor.x, sy, clamp(sp / 1600, 0.3, 1));
+    }
+    // 在水里移动：身后带出一串小气泡
+    if (dy > 18 && sp > 130 && now - lastWake > 0.045) {
+      lastWake = now;
+      addBubble(cursor.x - cursor.vx * 0.03 + (Math.random() - 0.5) * 6,
+        cursor.y + (Math.random() - 0.5) * 6, 0.8 + Math.random() * 1.4);
+    }
+  }
+
   // ---------- 像素鱼 ----------
   // 水越多，鱼越多：⅓ 小丑鱼，⅔ 蓝倒吊，满了来一小群银色小鱼
 
@@ -317,6 +359,20 @@
     const leaving = f.mode === 'leave';
     const band = fishBand();
 
+    // 鼠标在水里靠近：吓一跳，赶紧游开
+    if (!leaving && cursorLive() && cursor.y > baseY + 10 && Math.hypot(f.x - cursor.x, f.y - cursor.y) < 110) {
+      const away = Math.sign(f.x - cursor.x) || 1;
+      if (!f.leader) {
+        f.tx = clamp(f.x + away * 280, 40, W - 40);
+        f.ty = clamp(f.y + (f.y - cursor.y) * 0.8, band.top, band.bottom);
+        f.pecking = false;
+        f.wait = 0;
+        f.scared = now + 1.2;
+      }
+      f.dir = away;
+      f.speed = Math.max(f.speed, f.sp.cruise * 2.6);
+    }
+
     if (f.leader && !leaving) {
       // 跟着领头的游，保持一点队形
       const L = f.leader;
@@ -337,7 +393,9 @@
       f.wait -= dt;
       f.speed += (5 - f.speed) * Math.min(1, dt * 1.5);
     } else {
-      const want = leaving ? cruise : f.leader ? Math.min(cruise * 1.6, dist * 2.2) : Math.min(cruise, 8 + dist * 0.5);
+      const scared = f.scared > now;
+      const want = leaving ? cruise : f.leader ? Math.min(cruise * 1.6, dist * 2.2)
+        : scared ? cruise * 2.2 : Math.min(cruise, 8 + dist * 0.5);
       f.speed += (want - f.speed) * Math.min(1, dt * 1.4);
       if (Math.abs(dx) > (f.leader ? 4 : 18)) f.dir = dx >= 0 ? 1 : -1;
     }
@@ -355,7 +413,7 @@
       if (f.x < -100 || f.x > W + 100) f.dead = true;
       return;
     }
-    if (!f.leader && dist < 14 && f.wait <= 0) {
+    if (!f.leader && dist < 14 && f.wait <= 0 && !(f.scared > now)) {
       if (f.pecking) {
         addRipple(f.x + f.dir * 16, 1.6, { tau: 1.0, speed: 70, wl: 30 });
         addBubble(f.x + f.dir * 14, f.y + 2, 1.4);
@@ -660,7 +718,7 @@
   // ---------- 每帧 ----------
 
   function isBusy() {
-    return flights.length || ripples.length || drops.length || mists.length || evap || fullFx
+    return flights.length || ripples.length || drops.length || mists.length || evap || fullFx || cursorLive()
       || Math.abs(level.v) > 1e-4 || Math.abs(targetLevel() - level.x) > 1e-4;
   }
 
@@ -728,6 +786,7 @@
       if (m.y < baseY + 6) m.y = H;
     }
 
+    updateCursor();
     updateFishes(dt);
   }
 
@@ -917,6 +976,15 @@
     applyState(d);
   });
 
+  api.on('cursor', setCursor);
+
+  // 倒水时拖着杯子走：水柱的出口跟着挪
+  api.on('stream-move', (d) => {
+    for (const f of flights) {
+      if (f.kind === 'stream' && f.tEnd == null) { f.x0 = d.from.x; f.y0 = d.from.y; }
+    }
+  });
+
   api.on('stream-start', (d) => {
     now = performance.now() / 1000;
     startStream(d.from, d.rate);
@@ -1001,6 +1069,7 @@
         drink('stream-end', Math.max(s.sipMl, Math.round(RATE * sec)));
       }
     });
+    window.addEventListener('mousemove', (e) => emit('cursor', { x: e.clientX, y: e.clientY }));
     window.__sip = { emit, get total() { return total; } };
 
     return {
