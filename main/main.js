@@ -9,9 +9,11 @@ const store = require('./store');
 const DEV = process.env.SIP_DEV === '1';
 
 const CORNER_SIZE = 60;        // 右上角热区 60×60
-const CORNER_DWELL_MS = 300;   // 停留多久降下杯子
+const CORNER_DWELL_MS = 100;   // 鼠标一到角落就降下杯子（留一点点防误触）
 const CUP_LEAVE_MS = 600;      // 离开多久收回杯子
-const POLL_MS = 100;
+const POLL_MS = 40;
+const POUR_RATE = 200;         // 按住杯子时每秒倒多少 ml（一直按一直倒）
+const POUR_MAX_SEC = 30;
 const CUP_WIN = { width: 120, height: 120 };
 
 let data = null;
@@ -36,6 +38,17 @@ const display = () => screen.getPrimaryDisplay();
 const menuBarHeight = () => {
   const d = display();
   return Math.max(0, d.workArea.y - d.bounds.y);
+};
+// 水窗口需要知道菜单栏多高、Dock 顶边在哪（起始水位要淹过 Dock）
+const geometry = () => {
+  const d = display();
+  const b = d.bounds;
+  const wa = d.workArea;
+  const gapBottom = b.y + b.height - (wa.y + wa.height);
+  return {
+    menuBar: menuBarHeight(),
+    dockTop: gapBottom > 8 ? wa.y + wa.height - b.y : null,
+  };
 };
 const totalMl = () => store.totalMl(data.today);
 const progress = () => (data.settings ? Math.min(1, totalMl() / data.settings.goalMl) : 0);
@@ -84,7 +97,8 @@ function createWaterWindow() {
   const b = display().bounds;
   waterWin = new BrowserWindow({
     x: b.x, y: b.y, width: b.width, height: b.height,
-    type: 'panel',
+    // 桌面层：在壁纸之上、所有窗口和 Dock 之下，永远不会盖住任何 App
+    type: 'desktop',
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
@@ -103,8 +117,7 @@ function createWaterWindow() {
     },
   });
   waterWin.setIgnoreMouseEvents(true);
-  waterWin.setAlwaysOnTop(true, 'screen-saver');
-  waterWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  waterWin.setVisibleOnAllWorkspaces(true, { skipTransformProcessType: true });
   waterWin.loadFile(path.join(__dirname, '../renderer/water/index.html'));
   waterWin.once('ready-to-show', () => {
     waterWin.setBounds(display().bounds);
@@ -304,7 +317,6 @@ let cornerSince = null;
 let leaveSince = null;
 let cupShown = false;
 let cupBusy = false;
-let dimmed = false;
 
 function inside(p, r) {
   return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
@@ -328,31 +340,11 @@ function hideCup() {
   cupWin.webContents.send('cup-hide');
 }
 
-function dockZone(p, d) {
-  const b = d.bounds;
-  const wa = d.workArea;
-  const gapBottom = b.y + b.height - (wa.y + wa.height);
-  const gapLeft = wa.x - b.x;
-  const gapRight = b.x + b.width - (wa.x + wa.width);
-  if (gapBottom > 8) return p.y >= b.y + b.height - gapBottom;
-  if (gapLeft > 8) return p.x < b.x + gapLeft;
-  if (gapRight > 8) return p.x >= b.x + b.width - gapRight;
-  // Dock 自动隐藏：碰到底边算进入，往上 90px 内都算还在 Dock 里
-  const fromBottom = b.y + b.height - p.y;
-  return dimmed ? fromBottom <= 90 : fromBottom <= 3;
-}
-
 function poll() {
   if (!data) return;
   const p = screen.getCursorScreenPoint();
   const d = display();
   const now = Date.now();
-
-  const dim = !data.today.hidden && dockZone(p, d);
-  if (dim !== dimmed) {
-    dimmed = dim;
-    sendWater('dim', dimmed);
-  }
 
   const corner = {
     x: d.bounds.x + d.bounds.width - CORNER_SIZE,
@@ -449,7 +441,7 @@ function setupIpc() {
     waterReady = true;
     const init = {
       ...statePayload(),
-      geometry: { menuBar: menuBarHeight() },
+      geometry: geometry(),
       evaporateFrom: pendingEvaporate,
     };
     pendingEvaporate = null;
@@ -461,23 +453,17 @@ function setupIpc() {
     settings: data.settings || store.DEFAULT_SETTINGS,
   }));
 
-  ipcMain.on('cup-sip', (_e, { spout }) => {
+  // 按下杯子就开始倒，按多久倒多久；轻点一下至少算一口
+  ipcMain.on('pour-start', (_e, { spout }) => {
     if (!data.settings) return;
-    recordDrink(data.settings.sipMl, { kind: 'cup', from: toWaterPoint(cupWin, spout) });
+    cupBusy = true;
+    sendWater('stream-start', { from: toWaterPoint(cupWin, spout), rate: POUR_RATE });
   });
 
-  ipcMain.on('stream-start', (_e, { spout }) => {
+  ipcMain.on('pour-end', (_e, { seconds }) => {
     if (!data.settings) return;
-    sendWater('stream-start', {
-      from: toWaterPoint(cupWin, spout),
-      rate: data.settings.cupMl / 1.5, // ml/s：按满 1.5 秒倒完一杯
-    });
-  });
-
-  ipcMain.on('stream-end', (_e, { fraction }) => {
-    if (!data.settings) return;
-    const f = Math.max(0, Math.min(1, Number(fraction) || 0));
-    recordDrink(data.settings.cupMl * f, { kind: 'stream-end' });
+    const sec = Math.max(0, Math.min(POUR_MAX_SEC, Number(seconds) || 0));
+    recordDrink(Math.max(data.settings.sipMl, POUR_RATE * sec), { kind: 'stream-end' });
   });
 
   ipcMain.on('cup-busy', (_e, busy) => { cupBusy = !!busy; });
@@ -513,7 +499,7 @@ function applyLoginItem() {
 function onDisplayChange() {
   if (alive(waterWin)) waterWin.setBounds(display().bounds);
   if (alive(cupWin)) cupWin.setBounds(cupBounds());
-  sendWater('geometry', { menuBar: menuBarHeight() });
+  sendWater('geometry', geometry());
 }
 
 // ---------- 启动 ----------

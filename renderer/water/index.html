@@ -6,41 +6,41 @@
   <title>Sip Water</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
-    canvas {
-      position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
-      transition: opacity 0.7s ease;
-    }
-    canvas.dim { opacity: 0.32; }
+    canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 1; }
 
-    /* 只在浏览器里单独预览时出现：模拟一个桌面，好看水的透明度 */
+    /* 只在浏览器里单独预览时出现：模拟一个桌面（窗口和 Dock 都盖在水上面） */
     body.preview {
       background:
-        radial-gradient(1200px 700px at 20% 15%, #d9c6b5 0%, transparent 60%),
-        radial-gradient(900px 600px at 85% 30%, #8fa7b8 0%, transparent 65%),
-        linear-gradient(160deg, #e8dccd, #a9b9c4 60%, #6d7f8d);
+        radial-gradient(1200px 700px at 20% 15%, #e2c9a8 0%, transparent 60%),
+        radial-gradient(900px 600px at 85% 30%, #7f9fb8 0%, transparent 65%),
+        linear-gradient(160deg, #ead8c0, #9fb4c4 55%, #4f6a80);
       font: 13px -apple-system, "PingFang SC", sans-serif;
     }
     body.preview .menubar {
-      position: fixed; top: 0; left: 0; right: 0; height: 25px;
+      position: fixed; z-index: 5; top: 0; left: 0; right: 0; height: 25px;
       background: rgba(245, 245, 245, 0.72); backdrop-filter: blur(20px);
     }
     body.preview .doc {
-      position: fixed; left: 8%; top: 12%; width: 46%; height: 70%;
+      position: fixed; z-index: 5; left: 8%; top: 12%; width: 40%; height: 52%;
       background: #fbfaf8; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.25);
-      padding: 48px 56px; box-sizing: border-box; color: #333; line-height: 1.9;
+      padding: 40px 48px; box-sizing: border-box; color: #333; line-height: 1.9;
     }
-    body.preview .dark {
-      position: fixed; right: 7%; top: 30%; width: 32%; height: 58%;
-      background: #1e1f22; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.35);
-      color: #9da5b4; padding: 32px; box-sizing: border-box; font-family: Menlo, monospace; line-height: 1.8;
+    body.preview .dock {
+      position: fixed; z-index: 5; bottom: 4px; left: 50%; transform: translateX(-50%);
+      width: 520px; height: 62px; border-radius: 18px;
+      background: rgba(255,255,255,0.32); backdrop-filter: blur(24px);
+      border: 1px solid rgba(255,255,255,0.4);
     }
     body.preview .help {
-      position: fixed; left: 12px; bottom: 10px; color: rgba(0,0,0,.55); font-size: 12px;
+      position: fixed; z-index: 6; left: 12px; bottom: 10px; color: rgba(255,255,255,.85); font-size: 12px;
+      text-shadow: 0 1px 2px rgba(0,0,0,.4);
     }
   </style>
 </head>
 <body>
+  <canvas id="gl"></canvas>
   <canvas id="water"></canvas>
+  <script src="sprites.js"></script>
   <script src="water.js"></script>
 </body>
 </html>
