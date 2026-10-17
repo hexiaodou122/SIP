@@ -2,3 +2,12 @@ node_modules/
 dist/
 .DS_Store
 bin/
+
+# Generated captures and local runtime data
+artifacts/
+sip-data.json
+sip-data.json.tmp
+.env
+.env.*
+!.env.example
+*.log

@@ -4,6 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const { sanitizeCollection } = require('./collection');
+const fishCatalog = require('../renderer/fish/fish.json');
 
 const DAY_START_HOUR = 4;
 const HISTORY_LIMIT = 400;
@@ -58,6 +60,7 @@ function load() {
     raw = null;
   }
   const data = {
+    collection: sanitizeCollection(raw && raw.collection, fishCatalog),
     settings: sanitizeSettings(raw && raw.settings), // null = 还没做过首次选择
     today: emptyToday(),
     history: Array.isArray(raw && raw.history) ? raw.history : [],

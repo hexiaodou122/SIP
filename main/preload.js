@@ -2,12 +2,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const SEND = [
+  'cup-drag-start', 'cup-drag-end', 'open-collection',
   'pour-start', 'pour-end', 'cup-busy', 'cup-retracted',
   'save-settings', 'onboarding-done', 'close-window',
 ];
-const INVOKE = ['water-ready', 'cup-ready', 'get-settings'];
+const INVOKE = ['water-ready', 'cup-ready', 'get-settings', 'get-collection'];
 const ON = [
-  'state', 'drink', 'stream-start', 'evaporate', 'geometry', 'hidden',
+  'state', 'fish-arrive', 'drink', 'stream-start', 'evaporate', 'geometry', 'hidden',
   'cup-show', 'cup-hide', 'cup-release', 'cursor', 'stream-move',
 ];
 

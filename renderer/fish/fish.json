@@ -1,0 +1,7 @@
+[
+  {"id":"clown","name":"小丑鱼","english":"Clownfish","habitat":"浅水","threshold":0.1,"minCm":8,"maxCm":11,"description":"住在海葵里，身上有一层黏液，海葵蛰不到它。更神奇的是，小丑鱼生下来全是男生，群里最大的那条会变成女生。"},
+  {"id":"tang","name":"蓝倒吊","english":"Blue Tang","habitat":"中层","threshold":0.4,"minCm":15,"maxCm":30,"description":"看着温柔，尾巴根上却藏着一把像手术刀一样锋利的小刺，所以它的家族叫“刺尾鱼”。别惹它。"},
+  {"id":"puffer","name":"河豚","english":"Pufferfish","habitat":"中层","threshold":0.4,"minCm":10,"maxCm":30,"description":"遇到危险会猛吞水，把自己撑成一个圆球。鼓一次挺累的，所以它也不随便鼓。"},
+  {"id":"sunfish","name":"翻车鱼","english":"Ocean Sunfish","habitat":"深海","threshold":0.75,"minCm":100,"maxCm":300,"description":"世界上最重的硬骨鱼之一，大的能超过两吨。明明住在深海，却喜欢浮到水面侧躺着晒太阳，所以英文叫 sunfish。"},
+  {"id":"angler","name":"鮟鱇鱼","english":"Anglerfish","habitat":"深海","threshold":0.75,"minCm":10,"maxCm":40,"description":"深海一片漆黑，它头上挂着一盏小灯，灯里住着会发光的细菌。小鱼以为是吃的，游过去就……你懂的。"}
+]

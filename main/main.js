@@ -8,13 +8,16 @@ const fs = require('fs');
 const readline = require('readline');
 const { spawn } = require('child_process');
 const store = require('./store');
+const { awardFish, emptyCollection } = require('./collection');
+const fishCatalog = require('../renderer/fish/fish.json');
 
 const DEV = process.env.SIP_DEV === '1';
+let newDayRequested = DEV && process.argv.includes('--new-day');
 
-// 满水位 = 屏幕高度的几分之几（从屏幕最底部往上涨）。想让水更高/更低，改这里。
-const WATER_FULL_RATIO = 1 / 3;
+// 起始浅水与满水高度统一在 renderer/shared/constants.js 调整。
+const { WATER_BASE_RATIO, WATER_FULL_RATIO } = require('../renderer/shared/constants');
 // 像素格大小（屏幕 px），水、杯子、鱼都在这个网格上。和 renderer 里的 PX 一致。
-const PX = 3;
+const { PX } = require('../renderer/shared/constants');
 
 const CORNER_SIZE = 60;        // 右上角热区 60×60
 const CORNER_DWELL_MS = 100;   // 鼠标一到角落就降下杯子（留一点点防误触）
@@ -25,20 +28,26 @@ const POUR_MAX_SEC = 30;
 const SUMMON_HOLD_MS = 280;    // 在桌面上按住这么久：杯子出现并直接开始倒
 const DRAG_CANCEL_PX = 6;      // 按下后挪动超过这么多：当作框选/拖图标，不出杯子
 const HERE_LEAVE_MS = 1200;    // 点出来的杯子，鼠标离开多久收起
-const CUP_ANCHOR = { x: 66, y: 42 }; // 杯身中心在杯子窗口里的位置
-const CUP_WIN = { width: 120, height: 120 };
+const CUP_ANCHOR = { x: 22 * PX, y: 14 * PX }; // 杯身中心在杯子窗口里的位置
+const CUP_WIN = { width: 40 * PX, height: 40 * PX };
 
 let data = null;
 let waterWin = null;
 let cupWin = null;
 let tray = null;
 let settingsWin = null;
+let collectionWin = null;
+let devDayKey = null;
+let evaporatingUntil = 0;
 let onboardingWin = null;
 let waterReady = false;
 let pendingEvaporate = null;   // 启动时发现跨天：先给水窗口看旧水位，再蒸发
 
 // 测试时可以指定另一个数据目录，不碰真实数据
+// Keep the existing data location stable when the display name changes.
+const defaultDataDir = path.join(app.getPath('appData'), 'sip');
 if (process.env.SIP_DATA_DIR) app.setPath('userData', process.env.SIP_DATA_DIR);
+else app.setPath('userData', DEV ? path.join(defaultDataDir, 'development') : defaultDataDir);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -61,6 +70,7 @@ const geometry = () => {
     menuBar: menuBarHeight(),
     dockTop: gapBottom > 8 ? wa.y + wa.height - b.y : null,
     fullRatio: WATER_FULL_RATIO,
+    baseRatio: WATER_BASE_RATIO,
   };
 };
 const totalMl = () => store.totalMl(data.today);
@@ -75,6 +85,8 @@ function sendWater(channel, payload) {
 function statePayload() {
   return {
     totalMl: totalMl(),
+    collection: data.collection,
+    fishCatalog,
     settings: data.settings || store.DEFAULT_SETTINGS,
     hidden: data.today.hidden,
   };
@@ -82,16 +94,20 @@ function statePayload() {
 
 function broadcastState() {
   sendWater('state', statePayload());
+  if (alive(collectionWin)) collectionWin.webContents.send('state', statePayload());
   updateTrayIcon();
 }
 
 // 记录一次喝水。visual 是给水窗口的动画信息（从哪里落下来）
 function recordDrink(ml, visual) {
+  checkDay();
   ml = Math.round(ml);
   if (ml > 0) {
     data.today.entries.push({ t: Date.now(), ml });
-    save();
   }
+  const arrival = awardFish(data, fishCatalog);
+  save();
+  if (arrival) sendWater('fish-arrive', arrival);
   if (visual) sendWater('drink', { ...visual, ml, totalMl: totalMl() });
   broadcastState();
 }
@@ -203,7 +219,7 @@ function smallWindow(file, opts) {
 
 function openOnboarding() {
   if (alive(onboardingWin)) { onboardingWin.focus(); return; }
-  onboardingWin = smallWindow('onboarding/index.html', { width: 440, height: 540, title: 'Sip' });
+  onboardingWin = smallWindow('onboarding/index.html', { width: 560, height: 740, title: '喝水养鱼 · SIP' });
   onboardingWin.on('closed', () => {
     onboardingWin = null;
     // 没选就关掉：先按 1500 用着，以后可在设置里改
@@ -221,6 +237,15 @@ function openSettings() {
   settingsWin.on('closed', () => { settingsWin = null; });
 }
 
+function openCollection() {
+  data.collection.unseenBadge = false;
+  save();
+  broadcastState();
+  if (alive(collectionWin)) { app.focus({ steal: true }); collectionWin.focus(); return; }
+  collectionWin = smallWindow('fish/index.html', { width: 940, height: 750, title: '图鉴' });
+  collectionWin.on('closed', () => { collectionWin = null; });
+}
+
 // ---------- 菜单栏 ----------
 
 function trayLevel() {
@@ -231,7 +256,7 @@ function trayLevel() {
 }
 
 function trayImage(level, tilt = '') {
-  const file = path.join(__dirname, '../assets/tray', `cup${level}${tilt}Template.png`);
+  const file = path.join(__dirname, '../assets/tray', `cup${level}${tilt}${data.collection.unseenBadge ? '-dot' : ''}Template.png`);
   const img = nativeImage.createFromPath(file);
   img.setTemplateImage(true);
   return img;
@@ -299,6 +324,7 @@ function buildMenu() {
       click: () => setHidden(!data.today.hidden),
     },
     { type: 'separator' },
+    { label: '图鉴', click: openCollection },
     { label: '设置…', click: openSettings },
   ];
   if (DEV) {
@@ -310,13 +336,14 @@ function buildMenu() {
           click: () => devSetLevel(v),
         })),
         { label: '演示：倒满', click: devFill },
-        { label: '演示：蒸发', click: devEvaporate },
+        { label: '演示：到了第二天', click: devEvaporate },
+        { label: '清空收藏，回到第一天', click: devReset },
         { label: '打开水窗口调试', click: () => waterWin.webContents.openDevTools({ mode: 'detach' }) },
         { label: '打开杯子调试', click: () => cupWin.webContents.openDevTools({ mode: 'detach' }) },
       ],
     });
   }
-  template.push({ type: 'separator' }, { label: '退出 Sip', click: () => app.quit() });
+  template.push({ type: 'separator' }, { label: '退出喝水养鱼', click: () => app.quit() });
   return Menu.buildFromTemplate(template);
 }
 
@@ -337,6 +364,7 @@ let leaveSince = null;
 let cupShown = false;
 let cupBusy = false;
 let cupMode = 'corner';
+let cupDrag = null;
 let lastSpout = null;          // 出水口在杯子窗口里的位置
 
 function inside(p, r) {
@@ -347,7 +375,7 @@ function inside(p, r) {
 function waterSurfaceY() {
   const d = display();
   const H = d.bounds.height;
-  return d.bounds.y + H - progress() * H * WATER_FULL_RATIO;
+  return d.bounds.y + H - H * (WATER_BASE_RATIO + progress() * (WATER_FULL_RATIO - WATER_BASE_RATIO));
 }
 
 // 点出来的杯子：杯身在鼠标下面；如果点在水里，杯子浮到水面上方
@@ -376,6 +404,7 @@ function showCup(mode = 'corner', at = null, pour = false) {
 function hideCup() {
   if (!cupShown || !alive(cupWin)) return;
   cupShown = false;
+  cupDrag = null;
   cupBusy = false;
   cornerSince = null;
   cupWin.setIgnoreMouseEvents(true);
@@ -387,6 +416,16 @@ function poll() {
   const p = screen.getCursorScreenPoint();
   const d = display();
   const now = Date.now();
+  if (cupDrag && cupShown && alive(cupWin)) {
+    const x = snap(Math.max(d.bounds.x, Math.min(d.bounds.x + d.bounds.width - CUP_WIN.width, p.x - cupDrag.x)), d.bounds.x);
+    const y = snap(Math.max(d.workArea.y, Math.min(d.bounds.y + d.bounds.height - CUP_WIN.height, p.y - cupDrag.y)), d.bounds.y);
+    const old = cupWin.getBounds();
+    if (old.x !== x || old.y !== y) {
+      cupMode = 'here';
+      cupWin.setBounds({x,y,...CUP_WIN});
+      if (lastSpout) sendWater('stream-move', {from:toWaterPoint(cupWin,lastSpout)});
+    }
+  }
 
   const corner = {
     x: d.bounds.x + d.bounds.width - CORNER_SIZE,
@@ -516,7 +555,7 @@ function onMouse(ev) {
 
 function checkDay() {
   if (!data) return;
-  const key = store.dayKey();
+  const key = DEV && devDayKey ? devDayKey : store.dayKey();
   if (key === data.today.dayKey) return;
   const wasHidden = data.today.hidden;
   const fromLevel = progress();
@@ -527,13 +566,18 @@ function checkDay() {
     return;
   }
   if (wasHidden) applyHidden();
-  else if (fromLevel > 0) sendWater('evaporate', { fromLevel });
+  else if (fromLevel > 0) {
+    evaporatingUntil = Date.now() + 6000;
+    sendWater('evaporate', { fromLevel, exitDuration: 2, duration: 6 });
+  }
   broadcastState();
 }
 
 // ---------- 开发预览 ----------
 
 function devSetLevel(v) {
+  if (!DEV) return;
+  if (!data.settings) data.settings = { ...store.DEFAULT_SETTINGS };
   const goal = data.settings.goalMl;
   data.today.entries = v > 0 ? [{ t: Date.now(), ml: Math.round(goal * v) }] : [];
   save();
@@ -541,6 +585,7 @@ function devSetLevel(v) {
 }
 
 function devFill() {
+  if (!DEV || Date.now() < evaporatingUntil) return;
   devSetLevel(0.9);
   setTimeout(() => {
     const rest = data.settings.goalMl - totalMl();
@@ -550,11 +595,48 @@ function devFill() {
 }
 
 function devEvaporate() {
+  if (!DEV || Date.now() < evaporatingUntil) return;
   const fromLevel = progress();
-  data.today.entries = [];
+  const next = new Date(data.today.dayKey + 'T12:00:00');
+  next.setDate(next.getDate() + 1);
+  devDayKey = store.dayKey(next);
+  store.rollover(data, devDayKey);
   save();
-  sendWater('evaporate', { fromLevel });
+  evaporatingUntil = Date.now() + 6000;
+  sendWater('evaporate', { fromLevel, exitDuration: 2, duration: 6 });
+  applyHidden();
   broadcastState();
+}
+
+function devReset() {
+  if (!DEV) return;
+  data.collection = emptyCollection();
+  data.history = [];
+  devDayKey = null;
+  store.rollover(data, store.dayKey());
+  data.history = [];
+  evaporatingUntil = 0;
+  save();
+  applyHidden();
+  broadcastState();
+}
+
+// Explicit development demo: three completed days ending today, using real award rules.
+function seedThreeDays() {
+  data.settings = data.settings || {...store.DEFAULT_SETTINGS};
+  data.collection = emptyCollection();
+  data.history = [];
+  const end = new Date(store.dayKey() + 'T12:00:00');
+  for (let i = 0; i < 3; i++) {
+    const date = new Date(end); date.setDate(date.getDate() - 2 + i);
+    const key = store.dayKey(date);
+    if (i) store.rollover(data, key);
+    else data.today = {dayKey:key, entries:[], hidden:false};
+    data.today.entries = [{t:date.getTime(),ml:data.settings.goalMl}];
+    awardFish(data,fishCatalog);
+  }
+  save();
+  console.log('[sip] 三天喝满演示已准备：', Object.keys(data.collection.fish).join(', '));
 }
 
 function registerDevShortcuts() {
@@ -563,6 +645,7 @@ function registerDevShortcuts() {
   });
   globalShortcut.register('Control+Alt+F', devFill);
   globalShortcut.register('Control+Alt+E', devEvaporate);
+  globalShortcut.register('Control+Alt+R', devReset);
   globalShortcut.register('Control+Alt+C', () => showCup('corner'));
 }
 
@@ -583,8 +666,11 @@ function setupIpc() {
       evaporateFrom: pendingEvaporate,
     };
     pendingEvaporate = null;
+    if (newDayRequested) { newDayRequested = false; setTimeout(devEvaporate, 300); }
     return init;
   });
+
+  ipcMain.handle('get-collection', () => ({ collection: data.collection, fishCatalog }));
 
   ipcMain.handle('cup-ready', () => ({ settings: data.settings || store.DEFAULT_SETTINGS }));
   ipcMain.handle('get-settings', () => ({
@@ -605,6 +691,17 @@ function setupIpc() {
     recordDrink(Math.max(data.settings.sipMl, POUR_RATE * sec), { kind: 'stream-end' });
   });
 
+  ipcMain.on('cup-drag-start', (e) => {
+    if (!alive(cupWin) || e.sender !== cupWin.webContents || !cupShown) return;
+    const p = screen.getCursorScreenPoint(), b = cupWin.getBounds();
+    cupDrag = {x:p.x-b.x,y:p.y-b.y};
+  });
+  ipcMain.on('cup-drag-end', (e) => {
+    if (alive(cupWin) && e.sender === cupWin.webContents) cupDrag = null;
+  });
+  ipcMain.on('open-collection', (e) => {
+    if (alive(cupWin) && e.sender === cupWin.webContents) openCollection();
+  });
   ipcMain.on('cup-busy', (_e, busy) => { cupBusy = !!busy; });
   ipcMain.on('cup-retracted', () => {});
 
@@ -647,14 +744,16 @@ app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
 
   data = store.load();
+  if (DEV && process.argv.includes('--demo-three-days')) seedThreeDays();
   checkDay();
+  if (DEV && !data.settings) data.settings = { ...store.DEFAULT_SETTINGS };
 
   setupIpc();
   createWaterWindow();
   createCupWindow();
   createTray();
 
-  if (!data.settings) openOnboarding();
+  if (!data.settings || process.argv.includes('--welcome')) openOnboarding();
 
   setInterval(poll, POLL_MS);
   setInterval(checkDay, 60 * 1000);
@@ -666,11 +765,14 @@ app.whenReady().then(() => {
   screen.on('display-removed', onDisplayChange);
 
   startMouseHelper();
+  if (!globalShortcut.register('Control+Alt+G', openCollection)) console.warn('[sip] 图鉴快捷键被占用');
+  if (process.argv.includes('--collection')) openCollection();
   if (DEV) registerDevShortcuts();
   if (DEV && process.env.SIP_PIN_CUP === '1') setTimeout(() => showCup('corner'), 1500);
 });
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
+  if (argv.includes('--collection')) { openCollection(); return; }
   if (!data.settings) openOnboarding();
   else openSettings();
 });

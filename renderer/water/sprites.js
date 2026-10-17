@@ -1,157 +1,84 @@
-// 像素鱼：按参数生成像素画（自动描边、明暗、尾巴摆动帧），缓存成小画布
-// 风格参考《潜水员戴夫》：小而清楚的像素鱼，深色描边，颜色干净
-
+// 每个画布像素都是一格；体型通过重新绘制更多格子表达，不放大单格。
 (() => {
   'use strict';
-
   const SPECIES = {
-    // 小丑鱼：橘色，两条白带，白带边上一圈黑
-    clown: {
-      len: 15, h: 9, tail: 4, scale: 3, cruise: 26,
-      base: '#f07a22', light: '#ffab4a', dark: '#bd4c14', line: '#2b160d',
-      tailColor: '#e8701c', finColor: '#e8701c',
-      paint(s, rel) {
-        const band = (c, w) => Math.abs(s - c) <= w;
-        if (band(0.32, 0.07) || band(0.64, 0.05)) return rel < -0.5 ? '#ffffff' : '#f4efe6';
-        if (band(0.32, 0.12) || band(0.64, 0.1)) return this.line;
-        return null;
-      },
-    },
-    // 蓝倒吊：宝蓝身体，黑色"调色板"花纹，黄尾巴
-    tang: {
-      len: 16, h: 10, tail: 4, scale: 3, cruise: 30,
-      base: '#2f6fd8', light: '#62a2f2', dark: '#1d3f8c', line: '#0e1a38',
-      tailColor: '#f3c33c', finColor: '#25519f',
-      paint(s, rel) {
-        // 背上一道深色的"调色板"纹，中间鼓、两头收
-        if (s > 0.1 && s < 0.64) {
-          const top = -0.5 + (s - 0.1) * 0.2;
-          const bot = 0.28 - Math.abs(s - 0.36) * 0.95;
-          if (rel > top && rel < bot) return '#162a5c';
-        }
-        return null;
-      },
-    },
-    // 银色小鱼（成群）
-    minnow: {
-      len: 7, h: 3, tail: 2, scale: 3, cruise: 44,
-      base: '#9fbfcb', light: '#e4f2f6', dark: '#5f8291', line: '#2a3f49',
-      tailColor: '#8fb1be', finColor: null,
-      paint(s, rel) { return Math.abs(rel) < 0.2 && s > 0.15 && s < 0.85 ? '#d6ecf3' : null; },
-    },
+    clown: {len:16,h:9,minCm:8,maxCm:11,minLen:14,maxLen:18,cruise:26,base:'#ee782c',light:'#ffb25d',dark:'#ba481e',line:'#31251c',tail:'#e97b2c'},
+    tang: {len:22,h:13,minCm:15,maxCm:30,minLen:18,maxLen:27,cruise:30,base:'#367ac6',light:'#6ca6e4',dark:'#235198',line:'#162e48',tail:'#efc348'},
+    puffer: {len:20,h:15,minCm:10,maxCm:30,minLen:16,maxLen:25,cruise:18,base:'#b39b59',light:'#d9c88a',dark:'#e4d9b2',line:'#454639',tail:'#a79860'},
+    sunfish: {len:42,h:39,minCm:100,maxCm:300,minLen:34,maxLen:50,cruise:13,base:'#819b9d',light:'#b6c7bf',dark:'#526e7b',line:'#304957',tail:'#68828b'},
+    angler: {len:25,h:17,minCm:10,maxCm:40,minLen:19,maxLen:30,cruise:15,base:'#705948',light:'#9a7b59',dark:'#443d3d',line:'#222f38',tail:'#766146'},
   };
-
-  const FLAPS = [0, 1, 0, -1];
-
-  function profile(s) {
-    // s：0 = 尾根，1 = 鼻尖。前面饱满，鼻子圆，尾根收细
-    if (s < 0.62) return 0.42 + 0.58 * Math.sin((s / 0.62) * Math.PI / 2);
-    const k = (s - 0.62) / 0.38;
-    return Math.sqrt(Math.max(0, 1 - k * k * 0.92));
-  }
-
-  function build(sp, flap) {
-    const W = sp.tail + sp.len + 3;
-    const H = sp.h + 5;
-    const grid = Array.from({ length: H }, () => Array(W).fill(null));
-    const c = H / 2;
-    const x0 = sp.tail + 1;
-    const half = sp.h / 2;
-
-    // 身体
-    for (let x = 0; x < sp.len; x++) {
-      const s = (x + 0.5) / sp.len;
-      const hh = half * profile(s);
-      for (let y = 0; y < H; y++) {
-        const dy = y + 0.5 - c;
-        if (Math.abs(dy) <= hh) {
-          const rel = dy / Math.max(hh, 0.5);
-          let col = sp.paint(s, rel);
-          if (!col) col = rel < -0.4 ? sp.light : rel > 0.45 ? sp.dark : sp.base;
-          grid[y][x0 + x] = col;
+  const TINTS=[0,.16,.3], FLAPS=[0,1,0,-1], cache=new Map();
+  function build(name,cm,flap,portrait=false) {
+    const sp=SPECIES[name], ratio=Math.max(0,Math.min(1,(cm-sp.minCm)/(sp.maxCm-sp.minCm)));
+    const len=portrait?({clown:13,tang:16,puffer:14,sunfish:14,angler:17}[name]):Math.round(sp.minLen+(sp.maxLen-sp.minLen)*ratio), h=Math.round(len*sp.h/sp.len);
+    const tail=name==='sunfish'?3:Math.max(3,Math.round(len*.22));
+    const extra=name==='sunfish'?Math.round(h*.42):name==='angler'?(portrait?6:10):4;
+    const W=len+tail+5,H=h+extra*2+4,x0=tail+2,cy=Math.floor(H/2),half=h/2;
+    const grid=Array.from({length:H},()=>Array(W).fill(null));
+    const dot=(x,y,c)=>{if(grid[y]&&x>=0&&x<W)grid[y][x]=c;};
+    function profile(s) { if(name==='sunfish')return Math.sqrt(Math.max(.05,1-Math.pow((s-.46)/.58,2)));return s<.63?.35+.65*Math.sin(s/.63*Math.PI/2):Math.sqrt(Math.max(.1,1-Math.pow((s-.63)/.41,2))); }
+    for(let x=0;x<len;x++) {
+      const s=(x+.5)/len,hh=half*profile(s);
+      for(let y=Math.ceil(cy-hh);y<=Math.floor(cy+hh);y++) {
+        const rel=(y-cy)/hh; let col=rel<-.35?sp.light:rel>.4?sp.dark:sp.base;
+        if(name==='clown') {
+          const b=[.18,.49,.82].map(v=>Math.abs(s-v));
+          if(b.some(v=>v<.055))col='#f8efda';else if(b.some(v=>v<.095))col=sp.line;
         }
+        if(name==='tang'&&s>.08&&s<.72&&rel>-.65&&rel<.18-Math.abs(s-.36)*1.8)col='#172f52';
+        if(name==='puffer'&&rel<.3&&(x*7+y*11)%19<3)col='#665d3e';
+        if(name==='sunfish'&&(x*3+y*7)%31<2)col=rel<0?'#9cb0aa':'#6a858d';
+        if(name==='angler'&&(x*5+y*7)%29<2)col='#ab875d';
+        dot(x0+x,y,col);
       }
     }
-
-    // 背鳍
-    if (sp.finColor) {
-      for (let x = Math.round(sp.len * 0.36); x <= Math.round(sp.len * 0.62); x++) {
-        const s = (x + 0.5) / sp.len;
-        const top = Math.floor(c - half * profile(s) + 0.5);
-        const tall = x > sp.len * 0.42 && x < sp.len * 0.56 ? 2 : 1;
-        for (let k = 1; k <= tall; k++) if (top - k >= 0) grid[top - k][x0 + x] = sp.finColor;
+    // 尾鳍或翻车鱼的短、波浪状伪尾鳍。
+    for(let k=1;k<=tail;k++) for(let y=-Math.ceil(half*.6);y<=Math.ceil(half*.6);y++) {
+      if(name==='sunfish') {if(Math.abs(y)<half*.86)dot(x0-k,cy+y+(k===tail?Math.round(Math.sin(y)*1):0),sp.tail);}
+      else if(Math.abs(y-flap*k*.3)<1+k*.68)dot(x0-k,cy+y,sp.tail);
+    }
+    if(name==='sunfish') {
+      for(let k=0;k<extra;k++) for(let q=0;q<Math.max(2,Math.round(len*.2-k*.4));q++) {
+        dot(x0+Math.round(len*.42)+q-Math.round(k*.25),cy-Math.round(half*.94)-k,sp.dark);
+        dot(x0+Math.round(len*.48)+q-Math.round(k*.2),cy+Math.round(half*.91)+k,sp.dark);
+      }
+    } else if(name!=='puffer') {
+      for(let x=Math.round(len*.23);x<len*.65;x++) {
+        const top=cy-Math.floor(half*profile(x/len));
+        dot(x0+x,top-1,sp.dark); if(x>len*.35)dot(x0+x,top-2,sp.dark);
       }
     }
-
-    // 尾巴：随帧上下摆，末端开叉
-    for (let k = 1; k <= sp.tail; k++) {
-      const x = x0 - k;
-      const spread = 0.6 + k * (sp.h > 5 ? 0.85 : 0.6);
-      const off = flap * k * 0.45;
-      for (let y = 0; y < H; y++) {
-        const dy = y + 0.5 - c - off;
-        if (Math.abs(dy) <= spread && !(k === sp.tail && Math.abs(dy) < spread * 0.4)) {
-          grid[y][x] = sp.tailColor;
-        }
+    // 胸鳍、鳃与小眼睛，没有卡通眼白。
+    const gx=x0+Math.round(len*.69);
+    for(let y=0;y<Math.max(2,Math.round(h*.25));y++)dot(gx,cy+y,sp.dark);
+    for(let x=0;x<Math.max(2,Math.round(len*.14));x++)dot(gx-x,cy+2+Math.floor(x*.4)+flap,sp.tail);
+    dot(x0+Math.round(len*.86),cy-Math.round(h*.18),'#111e27');
+    dot(x0+len-1,cy+1,sp.line);
+    let lure=null;
+    if(name==='angler') {
+      // 大斜口和交错细牙；灯须弯向嘴上方。
+      for(let x=Math.round(len*.72);x<len;x++) {
+        const cut=Math.round((x/len-.72)*h*.75);
+        for(let y=cy-cut;y<=cy+cut+1;y++)dot(x0+x,y,'#182b35');
+        if(x%2===0&&cut>0){dot(x0+x,cy-cut,'#dbcba0');dot(x0+x,cy+cut,'#dbcba0');}
       }
-    }
-
-    // 眼睛
-    const ex = x0 + Math.round(sp.len * 0.78);
-    const ey = Math.floor(c - half * 0.28);
-    if (sp.h > 5) {
-      grid[ey][ex] = '#0b0b0b';
-      grid[ey - 1] && (grid[ey - 1][ex + 1] = grid[ey - 1][ex + 1] ? '#ffffff' : grid[ey - 1][ex + 1]);
-    } else {
-      grid[ey][ex] = '#0b0b0b';
-    }
-
-    // 描边：空格子只要挨着鱼，就涂成深色
-    const out = grid.map((r) => r.slice());
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (grid[y][x]) continue;
-        const n = (yy, xx) => grid[yy] && grid[yy][xx];
-        if (n(y - 1, x) || n(y + 1, x) || n(y, x - 1) || n(y, x + 1)) out[y][x] = sp.line;
+      const start=x0+Math.round(len*.55),end=x0+len-1,top=cy-Math.round(half)-7;
+      for(let x=start;x<=end;x++) {
+        const t=(x-start)/(end-start),y=Math.round(top+Math.pow(t-.6,2)*13);
+        dot(x,y,'#a99365'); if(x===end)lure={x,y:y+1};
       }
+      dot(lure.x,lure.y,'#e7fac4');dot(lure.x-1,lure.y,'#c1ecb5');dot(lure.x,lure.y+1,'#e7fac4');
     }
-
-    const cv = document.createElement('canvas');
-    cv.width = W;
-    cv.height = H;
-    const g = cv.getContext('2d');
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (!out[y][x]) continue;
-        g.fillStyle = out[y][x];
-        g.fillRect(x, y, 1, 1);
-      }
-    }
-    return cv;
+    const out=grid.map(row=>row.slice());
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(!grid[y][x]&&[[x-1,y],[x+1,y],[x,y-1],[x,y+1]].some(([a,b])=>grid[b]?.[a]))out[y][x]=sp.line;
+    const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;canvas.lure=lure;
+    const ctx=canvas.getContext('2d');for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(out[y][x]){ctx.fillStyle=out[y][x];ctx.fillRect(x,y,1,1);}return canvas;
   }
-
-  // 水越深，鱼越偏蓝一点
-  const TINTS = [0, 0.16, 0.3];
-  function tinted(src, t) {
-    if (!t) return src;
-    const cv = document.createElement('canvas');
-    cv.width = src.width;
-    cv.height = src.height;
-    const g = cv.getContext('2d');
-    g.drawImage(src, 0, 0);
-    g.globalCompositeOperation = 'source-atop';
-    g.fillStyle = `rgba(30, 96, 140, ${t})`;
-    g.fillRect(0, 0, cv.width, cv.height);
-    return cv;
-  }
-
-  const cache = {};
-  function frames(name) {
-    if (cache[name]) return cache[name];
-    const sp = SPECIES[name];
-    cache[name] = TINTS.map((t) => FLAPS.map((f) => tinted(build(sp, f), t)));
-    return cache[name];
-  }
-
-  window.SipSprites = { SPECIES, frames, TINT_LEVELS: TINTS.length };
+  function tinted(src,t) {if(!t)return src;const c=document.createElement('canvas');c.width=src.width;c.height=src.height;c.lure=src.lure;const g=c.getContext('2d');g.drawImage(src,0,0);g.globalCompositeOperation='source-atop';g.fillStyle=`rgba(30,96,140,${t})`;g.fillRect(0,0,c.width,c.height);return c;}
+  function frames(name,cm) {const sp=SPECIES[name];if(!sp)throw new Error(`Unknown fish: ${name}`);cm=Number.isFinite(cm)?cm:(sp.minCm+sp.maxCm)/2;const key=`${name}:${cm.toFixed(1)}`;if(!cache.has(key)){const originals=FLAPS.map(f=>build(name,cm,f));cache.set(key,TINTS.map(t=>originals.map(c=>tinted(c,t))));}return cache.get(key);}
+  // 图鉴重新按较少格子绘制肖像；仍是一格 3px，不缩放水里的鱼。
+  const portraits={};
+  function portrait(name){return portraits[name]||(portraits[name]=build(name,SPECIES[name].minCm,0,true));}
+  window.SipSprites={SPECIES,frames,portrait,TINT_LEVELS:TINTS.length};
 })();

@@ -6,10 +6,11 @@
 (() => {
   'use strict';
 
-  const PX = 3;               // 和 water.js / main.js 一样
+  const PX = window.SipConstants.PX;               // 和 water.js / main.js 一样
   const GRAVITY = 2600;       // 和 water.js 一样
   const STREAM_V0 = 160;      // 和 water.js 一样
   const N = 40;               // 画布 40×40 像素
+  document.documentElement.style.setProperty('--pixel', `${PX}px`);
   const HIDDEN_Y = -96;       // 收起时往上藏多少（屏幕 px）
   const POUR_ANGLE = -60;     // 倒水时杯子歪多少度
   const ANGLE_STEP = 10;      // 像素杯子按 10° 一档转，转起来是"一格一格"的
@@ -210,6 +211,7 @@
 
   function release() {
     if (pressAt == null) return;
+    api.send('cup-drag-end');
     const seconds = (performance.now() - pressAt) / 1000;
     pressAt = null;
     if (!pourSent) beginStream();
@@ -224,9 +226,16 @@
   hit.addEventListener('pointerdown', (e) => {
     if (!shown || e.button !== 0 || pressAt != null) return;
     hit.setPointerCapture(e.pointerId);
+    api.send('cup-drag-start');
     startPour();
   });
-  hit.addEventListener('pointerup', release);
+  hit.addEventListener('pointerup', e => { if (e.button === 0) release(); });
+  document.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (!shown) return;
+    release();
+    api.send('open-collection');
+  });
   hit.addEventListener('pointercancel', release);
   hit.addEventListener('lostpointercapture', release);
 

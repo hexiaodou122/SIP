@@ -1,35 +1,20 @@
 <!doctype html>
-<html lang="zh">
-<head>
-  <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
-  <title>Sip</title>
-  <link rel="stylesheet" href="../shared/panel.css">
-</head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'"><title>喝水养鱼 · SIP</title><link rel="stylesheet" href="onboarding.css"></head>
 <body>
-  <h1>你一天想喝多少水？</h1>
-  <p class="sub">喝够了，屏幕上的水正好涨满。以后随时可以改。</p>
-
-  <label class="card on" data-goal="1500" data-sip="20">
-    <input type="radio" name="goal" checked>
-    <span class="big">1500 ml</span><span class="small">每口按 20 ml</span>
-  </label>
-  <label class="card" data-goal="1700" data-sip="25">
-    <input type="radio" name="goal">
-    <span class="big">1700 ml</span><span class="small">每口按 25 ml</span>
-  </label>
-  <label class="card" data-custom>
-    <input type="radio" name="goal">
-    <span class="big">自己填</span>
-  </label>
-
-  <div class="custom" id="custom">
-    <div class="row"><label for="goal">每天</label><input id="goal" type="number" min="300" max="6000" step="50" value="2000"><span class="unit">ml</span></div>
-    <div class="row"><label for="sip">每口</label><input id="sip" type="number" min="5" max="200" step="1" value="25"><span class="unit">ml</span></div>
-    <p class="hint">天热、运动、出汗多的时候可以多一点</p>
-  </div>
-
-  <button class="primary" id="go">就这样</button>
-  <script src="onboarding.js"></script>
-</body>
-</html>
+<header><canvas id="welcome-art" width="164" height="42" aria-label="SIP 像素海面"></canvas><h1>喝水养鱼</h1><p class="sub">你喝水，桌面养鱼。</p></header>
+<section class="intro" aria-label="怎么玩">
+<p><span class="mark">+</span><span><strong>喝一口，添一点水</strong><br>鼠标移到右上角，或轻点桌面叫出杯子。<br>左键按住倒水，也能边倒边拖；松手就停。</span></p>
+<p><span class="mark">✦</span><span><strong>喝满一天，遇见一条鱼</strong><br>第一位朋友是小丑鱼。右键杯子，就能打开图鉴。</span></p>
+<p><span class="mark">≈</span><span><strong>明天，海还在这里</strong><br>水退回浅浅一层，收藏的鱼在远处等水回来。<br>不催你，也没有连续打卡。</span></p>
+</section>
+<section class="choose"><h2>你一天想喝多少水？</h2><p class="hint">选一个舒服的目标，以后可以在设置里改。</p>
+<div class="choices">
+<label class="card on" data-goal="1500" data-sip="20"><input type="radio" name="target" checked><span class="big">1500 ml</span><span class="small">每口 20 ml</span></label>
+<label class="card" data-goal="1700" data-sip="25"><input type="radio" name="target"><span class="big">1700 ml</span><span class="small">每口 25 ml</span></label>
+<label class="card" data-custom><input type="radio" name="target"><span class="big">自己填</span><span class="small">按你的习惯</span></label>
+</div>
+<div class="custom" id="custom"><label>每天 <input id="goal" type="number" min="300" max="6000" step="50" value="2000"> ml</label><label>每口 <input id="sip" type="number" min="5" max="200" step="1" value="25"> ml</label><p class="hint">天热、运动、出汗多的时候可以多一点。</p></div>
+<button id="go">让小海住进桌面 →</button>
+</section>
+<script src="../shared/constants.js"></script><script src="onboarding.js"></script>
+</body></html>

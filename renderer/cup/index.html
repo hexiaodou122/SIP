@@ -10,8 +10,8 @@
       user-select: none; -webkit-user-select: none; cursor: default;
     }
     /* 40×40 的像素画布放大 3 倍铺满 120×120 的杯子窗口 */
-    #cup { position: absolute; left: 0; top: 0; width: 120px; height: 120px; image-rendering: pixelated; }
-    #hit { position: absolute; left: 33px; top: 0; width: 66px; height: 84px; }
+    #cup { position: absolute; left: 0; top: 0; width: calc(40 * var(--pixel)); height: calc(40 * var(--pixel)); image-rendering: pixelated; }
+    #hit { position: absolute; left: calc(11 * var(--pixel)); top: 0; width: calc(22 * var(--pixel)); height: calc(28 * var(--pixel)); }
 
     body.preview { background: linear-gradient(160deg, #e8dccd, #a9b9c4 60%, #6d7f8d); font: 12px -apple-system, sans-serif; }
     body.preview .help { position: fixed; left: 8px; bottom: 6px; color: rgba(0,0,0,.5); }
@@ -20,6 +20,7 @@
 <body>
   <canvas id="cup" width="40" height="40"></canvas>
   <div id="hit"></div>
+  <script src="../shared/constants.js"></script>
   <script src="cup.js"></script>
 </body>
 </html>

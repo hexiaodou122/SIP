@@ -1,8 +1,8 @@
 {
   "name": "sip",
-  "productName": "Sip",
+  "productName": "喝水养鱼",
   "version": "0.1.0",
-  "description": "用屏幕上的水位陪你喝水",
+  "description": "喝水养鱼 · SIP：你喝水，桌面养鱼",
   "main": "main/main.js",
   "private": true,
   "scripts": {
@@ -14,17 +14,25 @@
     "helper": "node scripts/build-helper.js",
     "icons": "node scripts/make-tray-icons.js",
     "predist": "node scripts/build-helper.js",
-    "dist": "electron-builder --mac dmg"
+    "dist": "electron-builder --mac --dir --arm64 && node scripts/make-dmg.js",
+    "test": "node --test tests/*.test.js",
+    "capture": "electron scripts/capture-visuals.js",
+    "dist:local": "electron-builder --mac --dir --arm64 --config.electronDist=node_modules/electron/dist && node scripts/make-dmg.js",
+    "verify:package": "node scripts/verify-package.js",
+    "predist:local": "node scripts/build-helper.js"
   },
   "build": {
     "appId": "app.sip.water",
-    "productName": "Sip",
+    "productName": "喝水养鱼",
     "mac": {
       "category": "public.app-category.lifestyle",
       "target": "dmg",
       "extendInfo": {
         "LSUIElement": true
-      }
+      },
+      "icon": "assets/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false
     },
     "files": [
       "main/**",
@@ -37,7 +45,8 @@
         "from": "bin/sip-mouse",
         "to": "bin/sip-mouse"
       }
-    ]
+    ],
+    "artifactName": "Sip-${version}-mac-${arch}.${ext}"
   },
   "devDependencies": {
     "electron": "^44.9.0",

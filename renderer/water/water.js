@@ -1,6 +1,6 @@
 // 水窗口（铺在桌面层，所有窗口都在它上面）—— 像素风
 // 整个画面画在一张低分辨率画布上（1 个像素 = 屏幕上 PX×PX），再用 pixelated 放大：
-//   水：不透明平涂，3 层颜色台阶；水面一条浅色像素线 + 几颗白色高光
+//   水：不透明平涂，5 层颜色台阶；水面一条浅色像素线 + 几颗白色高光
 //   像素鱼、像素气泡、像素水柱 / 水花 / 蒸汽
 // 在 Electron 里由主进程驱动；直接用浏览器打开时进入"预览模式"，用键盘调试。
 
@@ -8,8 +8,9 @@
   'use strict';
 
   // ---- 可调常量 ----
-  const PX = 3;                  // 像素格大小（屏幕 px）。杯子窗口和主进程用同一个值，才能对齐
-  let FULL_RATIO = 1 / 3;        // 满水位 = 屏幕高度的几分之几（主进程会传来，见 main.js WATER_FULL_RATIO）
+  const PX = window.SipConstants.PX;                  // 像素格大小（屏幕 px）。杯子窗口和主进程用同一个值，才能对齐
+  let FULL_RATIO = window.SipConstants.WATER_FULL_RATIO;
+  let BASE_RATIO = window.SipConstants.WATER_BASE_RATIO;        // 满水位 = 屏幕高度的几分之几（主进程会传来，见 main.js WATER_FULL_RATIO）
   const GRAVITY = 2600;          // 水柱下落重力（px/s²），杯子窗口里用同一个值
   const STREAM_V0 = 160;         // 水柱出杯口的初速度（px/s），杯子窗口里用同一个值
   const STEP = 4;                // 水面计算采样（屏幕 px）
@@ -28,8 +29,8 @@
     bubble: '#d4f4ff',
     steam: '#e8f6fb',
   };
-  const BAND_A_ROWS = 3;             // 第 1 层厚度（像素行）
-  const BAND_C_FROM = 0.42;          // 水深的这个比例往下是第 3 层（跟着水位走，任何水位都看得到三层）
+  const BAND_A_ROWS = 2;             // 第 1 层厚度（像素行）
+  const BAND_C_FROM = 0.42;          // 鱼的深水着色起点，与五层水体配色独立
 
   const TAU = Math.PI * 2;
   const canvas = document.getElementById('water');
@@ -77,8 +78,7 @@
 
   // ---------- 几何 ----------
 
-  const fullHeight = () => H * FULL_RATIO;
-  const levelToY = (lv) => H + 6 - lv * (fullHeight() + 6);   // 0% 在屏幕最底下，100% 在 1/3 高度
+  const levelToY = (lv) => H - H * (BASE_RATIO + lv * (FULL_RATIO - BASE_RATIO)); // 环境底水不计入喝水量
 
   function resize() {
     W = window.innerWidth;
@@ -264,35 +264,39 @@
   }
 
   // ---------- 像素鱼 ----------
-  // 水越多，鱼越多：⅓ 小丑鱼，⅔ 蓝倒吊，满了来一小群银色小鱼
+  // 只有收藏的鱼会按栖息门槛从屏幕边缘返回。
 
   const SP = window.SipSprites;
   const fishes = [];
-  const GROUPS = [
-    { name: 'clown', at: 1 / 3 },
-    { name: 'tang', at: 2 / 3 },
-    { name: 'minnow', at: 0.98, school: 5 },
-  ];
+  let catalog = [];
+  let collection = { fish: {} };
+  const arrivals = [];
+  const particles = Array.from({length: 22}, (_, i) => ({u: (i * .6180339) % 1, phase: Math.random(), speed: 1 + Math.random() * 2}));
 
-  function fishBand() {
-    const top = baseY + 16;
-    const bottom = Math.max(top + 12, H - 14);
-    return { top, bottom };
+  function fishBand(f) {
+    const species = catalog.find(g => g.id === f.name);
+    const range = species?.habitat === '浅水' ? [.14, .25] : species?.habitat === '深海' ? [.79, .90] : [.44, .57];
+    const depth = Math.max(0, H - baseY);
+    const half = f.frames[0][0].height * PX / 2 + PX;
+    const safeBottom = H - half;
+    const safeTop = Math.min(safeBottom, baseY + half + PX);
+    return {
+      top: clamp(baseY + depth * range[0], safeTop, safeBottom),
+      bottom: clamp(baseY + depth * range[1], safeTop, safeBottom),
+    };
   }
 
-  function spawnGroup(g) {
-    const fromLeft = Math.random() < 0.5;
-    const band = fishBand();
-    const y0 = band.top + (band.bottom - band.top) * (0.2 + Math.random() * 0.4);
-    const n = g.school || 1;
-    const leader = makeFish(g.name, fromLeft, y0, null, 0);
-    leader.group = g;
-    fishes.push(leader);
-    for (let i = 1; i < n; i++) {
-      const f = makeFish(g.name, fromLeft, y0, leader, i);
-      f.group = g;
-      fishes.push(f);
-    }
+  function spawnGroup(g, arrival) {
+    const cm = arrival ? arrival.cm : (collection.fish[g.id].lastCm || collection.fish[g.id].maxCm);
+    const f = makeFish(g.id, Math.random() < .5, baseY, null, 0);
+    f.frames = SP.frames(g.id, cm);
+    const band = fishBand(f);
+    f.y = f.ty = band.top + Math.random() * (band.bottom - band.top);
+    f.group = g.id;
+    f.starUntil = arrival ? Infinity : 0;
+    f.arriving = !!arrival;
+    fishes.push(f);
+    return f;
   }
 
   function makeFish(name, fromLeft, y, leader, idx) {
@@ -313,38 +317,33 @@
   }
 
   function groupActive(g) {
-    return fishes.some((f) => f.group === g && f.mode !== 'leave');
+    return fishes.some((f) => f.group === g.id && f.mode !== 'leave');
   }
 
   function leaveGroup(g, fast) {
     for (const f of fishes) {
-      if ((g && f.group !== g) || f.mode === 'leave') continue;
+      if ((g && f.group !== g.id) || f.mode === 'leave') continue;
       f.mode = 'leave';
       f.fast = !!fast;
       f.pecking = false;
       f.wait = 0;
+      f.dir = f.x < W / 2 ? -1 : 1;
       f.tx = f.dir > 0 ? W + 120 : -120;
       f.ty = f.y;
     }
   }
 
   function pickTarget(f) {
-    const band = fishBand();
-    if (f.name !== 'minnow' && Math.random() < 0.18) {
-      f.pecking = true;
-      f.tx = clamp(f.x + (Math.random() - 0.5) * 260, 60, W - 60);
-      f.ty = baseY + 12;
-      return;
-    }
+    const band = fishBand(f);
     f.pecking = false;
-    const reach = f.name === 'minnow' ? W : 700;
+    const reach = 700;
     f.tx = clamp(f.x + (Math.random() - 0.5) * reach, 80, W - 80);
     f.ty = band.top + Math.random() * (band.bottom - band.top);
   }
 
   function updateFish(f, dt) {
     const leaving = f.mode === 'leave';
-    const band = fishBand();
+    const band = fishBand(f);
 
     if (!leaving && cursorLive() && cursor.y > baseY + 10 && Math.hypot(f.x - cursor.x, f.y - cursor.y) < 110) {
       const away = Math.sign(f.x - cursor.x) || 1;
@@ -367,12 +366,13 @@
     } else if (!leaving && !f.pecking) {
       f.ty = clamp(f.ty, band.top, band.bottom);
     }
-    if (f.pecking) f.ty = baseY + 12;
+    if (f.pecking) f.ty = band.top;
 
     const dx = f.tx - f.x;
     const dy = f.ty - f.y;
     const dist = Math.hypot(dx, dy);
-    const cruise = leaving ? (f.fast ? 110 : f.sp.cruise * 1.8) : f.pecking ? f.sp.cruise * 1.2 : f.sp.cruise;
+    const entering = f.arriving && f.starUntil === Infinity;
+    const cruise = entering ? 65 : leaving ? (f.fast ? (W / 2 + 150) / 1.5 : Math.max(90, f.sp.cruise * 1.8)) : f.pecking ? f.sp.cruise * 1.2 : f.sp.cruise;
 
     if (f.wait > 0) {
       f.wait -= dt;
@@ -388,7 +388,11 @@
     f.flip += clamp(f.dir - f.flip, -dt * 6, dt * 6);
     f.x += f.flip * f.speed * dt;
     f.y += clamp(dy * 1.2, -f.speed * 0.5, f.speed * 0.5) * dt;
-    f.y = clamp(f.y, baseY + 11, H - 8);
+    const halfH = f.frames[0][0].height * PX / 2 + PX;
+    f.y = leaving
+      ? clamp(f.y, Math.min(H - halfH, baseY + halfH + PX), H - halfH)
+      : clamp(f.y, band.top, band.bottom);
+    if (f.arriving && f.x > f.frames[0][0].width * PX / 2 + 12 && f.x < W - f.frames[0][0].width * PX / 2 - 12 && f.starUntil === Infinity) f.starUntil = now + 5;
     f.phase += dt * (2.4 + f.speed * 0.12);
 
     if (leaving) {
@@ -401,7 +405,7 @@
         addBubble(f.x + f.dir * 14, f.y + 2, 1.4);
         f.pecking = false;
         f.tx = f.x + f.dir * 140;
-        f.ty = baseY + 40 + Math.random() * 60;
+        f.ty = band.top + Math.random() * (band.bottom - band.top);
         f.wait = 0.2;
       } else {
         f.wait = Math.random() * 2.4;
@@ -413,11 +417,24 @@
 
   function updateFishes(dt) {
     if (!evap) {
-      for (const g of GROUPS) {
-        const active = groupActive(g);
-        if (!active && level.x >= g.at && Math.abs(level.v) < 0.03) spawnGroup(g);
-        if (active && level.x < g.at - 0.04) leaveGroup(g, false);
+      for (let i = arrivals.length - 1; i >= 0; i--) {
+        const a = arrivals[i];
+        if (level.x < .98 || now < a.at) continue;
+        const g = catalog.find(g => g.id === a.id);
+        if (g) {
+          for (let j = fishes.length - 1; j >= 0; j--) if (fishes[j].name === a.id) fishes.splice(j, 1);
+          spawnGroup(g, a);
+        }
+        arrivals.splice(i, 1);
       }
+      for (const g of catalog) {
+        const owned = collection.fish[g.id];
+        const active = groupActive(g);
+        const eligible = owned && targetLevel() >= g.threshold && level.x >= g.threshold - .001;
+        if (!active && eligible && !arrivals.some(a => a.id === g.id)) spawnGroup(g);
+        if (active && !eligible) leaveGroup(g, false);
+      }
+      for (const f of fishes) if (!collection.fish[f.name]) f.dead = true;
     }
     for (const f of fishes) updateFish(f, dt);
     for (let i = fishes.length - 1; i >= 0; i--) if (fishes[i].dead) fishes.splice(i, 1);
@@ -425,6 +442,10 @@
 
   function drawFishes() {
     const deepRow = bandCRow();
+    ctx.save();
+    ctx.beginPath();
+    for (let x = 0; x < LW; x++) ctx.rect(x, Math.ceil(surfaceAt(x * PX) / PX) + 1, 1, LH);
+    ctx.clip();
     for (const f of fishes) {
       const bob = Math.sin(now * 1.6 + f.bob) * 1.2;
       const ly = Math.round((f.y + bob) / PX);
@@ -432,6 +453,19 @@
       const w = Math.max(1, Math.round(im.width * Math.abs(f.flip)));
       const lx = Math.round(f.x / PX);
       const top = ly - Math.floor(im.height / 2);
+      if (f.name === 'angler') {
+        const lure = im.lure || {x: im.width - 6, y: 2};
+        const gx = lx + (lure.x - im.width / 2) * (f.flip >= 0 ? 1 : -1), gy = top + lure.y;
+        for (let r = 5; r >= 1; r--) {
+          ctx.fillStyle = `rgba(174,246,196,${(.018 + .007 * Math.sin(now * 1.6)) * (6-r)})`;
+          px(gx-r,gy-r,r*2+1,r*2+1);
+        }
+      }
+      if (f.starUntil > now && f.starUntil !== Infinity && Math.sin(now * 8) > -.55) {
+        const sx = lx + Math.round(f.dir * im.width * .3), sy = top - 5;
+        ctx.fillStyle = '#fff2ac'; px(sx,sy-2,1,5); px(sx-2,sy,5,1);
+        ctx.fillStyle = '#ffffff'; px(sx,sy);
+      }
       if (f.flip >= 0) {
         ctx.drawImage(im, lx - (w >> 1), top, w, im.height);
       } else {
@@ -441,6 +475,7 @@
         ctx.restore();
       }
     }
+    ctx.restore();
   }
 
   // ---------- 满了 ----------
@@ -457,20 +492,23 @@
     level.x = evap.from;
     level.v = 0;
     fullFx = null;
+    arrivals.length = 0;
+    flights.length = 0;
     leaveGroup(null, true);
   }
 
   function updateEvap(dt) {
     if (!evap) return;
     const p = now - evap.t0;
-    if (p > 0.4 && p < 3.4 && level.x > 0.002 && Math.random() < dt * 14) {
+    if (p > 2 && p < 5.4 && level.x > 0.002 && Math.random() < dt * 14) {
       steams.push({ x: Math.random() * W, y: baseY - 3, age: 0, life: 1.6 + Math.random() * 1.4, vy: -(18 + Math.random() * 16), sway: Math.random() * TAU });
     }
-    const q = clamp((p - 1.1) / 2.9, 0, 1);
+    if (evap.waterStart == null && !fishes.some(f => !f.dead)) evap.waterStart = now;
+    const q = clamp((now - (evap.waterStart ?? now)) / 4, 0, 1);
     const e = q < 0.5 ? 2 * q * q : 1 - Math.pow(-2 * q + 2, 2) / 2;
     level.x = evap.from * (1 - e);
     level.v = 0;
-    if (p > 4.0 && steams.length === 0) {
+    if (q >= 1 && steams.length === 0) {
       evap = null;
       level.x = 0;
       lastTarget = targetLevel();
@@ -559,7 +597,7 @@
         bubbles.splice(i, 1);
       }
     }
-    if (level.x > 0.03 && now > nextAmbientBubble) {
+    if (now > nextAmbientBubble) {
       nextAmbientBubble = now + 2.5 + Math.random() * 5;
       addBubble(Math.random() * W, H - 6 - Math.random() * 30);
     }
@@ -583,23 +621,26 @@
     return Math.round((baseY + Math.max(BAND_A_ROWS * PX + 9, depth * BAND_C_FROM)) / PX);
   }
 
-  // 每一列从水面往下：浅色线 → 第 1 层 → 第 2 层 → 第 3 层
+  // 每列从水面线向下绘制五层色带，边界使用错落像素台阶。
   function paintWater() {
     buf.fill(0);
-    const cRow = bandCRow();
     const surf = new Int32Array(LW);
     for (let cx = 0; cx < LW; cx++) {
       const sy = Math.round(surfaceAt(cx * PX + PX / 2) / PX);
       surf[cx] = sy;
       if (sy >= LH) continue;
       const y0 = Math.max(0, sy);
+      const depth = LH - sy;
+      const bend = (k) => Math.round(Math.sin(cx * .027 + k * 2.1 + now * .035) * 2 + Math.sin(cx * .073 - k + now * .02) * 1.2);
+      const boundaries = [sy + 2, sy + depth * .25 + bend(1), sy + depth * .51 + bend(2), sy + depth * .77 + bend(3)];
+      const palette = [rgb(100,211,197), rgb(49,169,188), rgb(35,128,170), rgb(28,92,145), rgb(22,62,112)];
       for (let y = y0; y < LH; y++) {
-        let col;
-        if (y === sy) col = C.line;
-        else if (y <= sy + BAND_A_ROWS) col = C.bandA;
-        else if (y < cRow) col = C.bandB;
-        else if (y === cRow) col = (cx & 1) ? C.bandB : C.bandC;   // 一行棋盘格过渡
-        else col = C.bandC;
+        let band = 0;
+        for (let k = 0; k < boundaries.length; k++) {
+          const edge = Math.round(boundaries[k]);
+          if (y > edge + (((cx * 17 + y * 11) % 7 === 0) ? 1 : 0)) band = k + 1;
+        }
+        let col = y === sy ? C.line : palette[band];
         buf[y * LW + cx] = col;
       }
       // 水面线比左右邻居高出一格时，补一格台阶，线才是连着的
@@ -616,7 +657,7 @@
     // 白色高光：几小段，沿着水面慢慢漂
     for (const h of highlights) {
       const cx0 = Math.floor(h.u * LW);
-      const blink = Math.sin(now * 1.3 + h.ph) > -0.6;
+      const blink = Math.sin(now * .8 + h.ph) > .89;
       if (!blink) continue;
       for (let k = 0; k < h.len; k++) {
         const cx = cx0 + k;
@@ -647,6 +688,32 @@
 
   function px(x, y, w = 1, h = 1) {
     ctx.fillRect(Math.round(x), Math.round(y), w, h);
+  }
+
+  function drawAtmosphere() {
+
+    // Stepped shafts are clipped column by column to the actual waving surface.
+    for (let b = 0; b < 3; b++) {
+      const origin = LW * [.16,.48,.79][b] + Math.sin(now * .16 + b) * 5;
+      for (let y = Math.max(0, Math.floor(baseY / PX)); y < LH; y++) {
+        const d = y - baseY / PX;
+        const mid = Math.round(origin + d * .48);
+        const width = Math.round(5 + d * .055);
+        const alpha = (.04 + .016 * Math.sin(now * .35 + b * 2)) * (1 - d / Math.max(1, LH - baseY/PX) * .65);
+        ctx.fillStyle = `rgba(179,247,210,${alpha})`;
+        for (let x = mid - width; x <= mid + width; x++) {
+          if (y > surfaceAt(x * PX) / PX + 2) px(x,y);
+        }
+      }
+    }
+    ctx.fillStyle = '#79b8c7';
+    for (const p of particles) {
+      const x = Math.round((p.u * LW + Math.sin(now * .15 + p.phase * 20) * 2));
+      const top = surfaceAt(x * PX) / PX + 4;
+      const depth = Math.max(1,LH-top);
+      const y = LH - ((now * p.speed + p.phase * depth) % depth);
+      if (y > top) px(x,y);
+    }
   }
 
   function drawBubbles() {
@@ -715,6 +782,7 @@
 
   function draw() {
     paintWater();
+    drawAtmosphere();
     drawFishes();
     drawBubbles();
     drawFlights();
@@ -738,17 +806,25 @@
   // ---------- 消息 ----------
 
   function applyState(s) {
+    if (s.collection) collection = s.collection;
+    if (s.fishCatalog) catalog = s.fishCatalog;
     if (s.settings) settings = s.settings;
     if (Number.isFinite(s.totalMl)) stateMl = s.totalMl;
   }
 
   function applyGeometry(g) {
     if (!g) return;
+    if (Number.isFinite(g.baseRatio)) BASE_RATIO = g.baseRatio;
     if (Number.isFinite(g.menuBar)) menuBar = g.menuBar;
     if (Number.isFinite(g.fullRatio) && g.fullRatio > 0) FULL_RATIO = g.fullRatio;
   }
 
   api.on('state', applyState);
+  api.on('fish-arrive', (a) => {
+    now = performance.now() / 1000;
+    triggerFull();
+    arrivals.push({...a, at: now + 1});
+  });
 
   api.on('drink', (d) => {
     now = performance.now() / 1000;
@@ -791,7 +867,15 @@
     level.x = targetLevel();
     lastTarget = level.x;
     now = performance.now() / 1000;
-    if (init.evaporateFrom) startEvaporate(init.evaporateFrom);
+    if (init.evaporateFrom) {
+      level.x = init.evaporateFrom;
+      baseY = levelToY(level.x);
+      for (const g of catalog) if (collection.fish[g.id] && level.x >= g.threshold) {
+        const f = spawnGroup(g); f.x = W * (.2 + Math.random() * .6);
+      }
+      startEvaporate(init.evaporateFrom);
+    }
+    if (init.dev) window.__sipInspect = () => ({level: level.x, surfaceY:baseY, height:H, evaporating: !!evap, fish: fishes.map(f => ({id:f.name,x:f.x,y:f.y,mode:f.mode,star:f.starUntil>now, width:f.frames[0][0].width,height:f.frames[0][0].height}))});
     ready = true;
   });
 
@@ -808,6 +892,18 @@
     const s = { goalMl: 1500, sipMl: 20, cupMl: 250, sound: false };
     const RATE = 200;
     let total = 0;
+    let previewCatalog = [], previewFish = {}, awarded = false;
+    const previewState = () => ({totalMl:total,settings:s,fishCatalog:previewCatalog,collection:{fish:previewFish}});
+    const award = () => {
+      if (awarded || total < s.goalMl || !previewCatalog.length) return;
+      const missing = previewCatalog.filter(g => !previewFish[g.id]);
+      const choices = missing.length ? missing : previewCatalog;
+      const g = Object.keys(previewFish).length ? choices[Math.floor(Math.random()*choices.length)] : previewCatalog[0];
+      const cm = Math.round((g.minCm + Math.random()*(g.maxCm-g.minCm))*10)/10;
+      const prev = previewFish[g.id];
+      previewFish[g.id]={firstSeen:prev?.firstSeen || new Date().toLocaleDateString('sv'),count:(prev?.count||0)+1,maxCm:Math.max(prev?.maxCm||0,cm),lastCm:cm};
+      awarded=true;emit('fish-arrive',{id:g.id,cm});emit('state',previewState());
+    };
     let pourStart = null;
 
     document.body.classList.add('preview');
@@ -816,11 +912,12 @@
       <div class="doc"><b>周五的剪辑笔记</b><br>开场 3 秒先给画面，不要先给字。<br>
       第二段节奏放慢，留出呼吸。<br>结尾那条水波要等它完全散开再切。</div>
       <div class="dock"></div>
-      <div class="help">0–4 水位 · S 菜单栏一口 · 按住 H 倒水（一直按一直倒） · U 撤回 · F 倒满 · E 蒸发</div>`);
+      <div class="help">0–4 水位 · S 菜单栏一口 · 按住 H 倒水（一直按一直倒） · U 撤回 · F 今日喝满 · E 第二天 · R 清空收藏</div>`);
 
     const cupFrom = () => ({ x: Math.round((window.innerWidth - 60) / PX) * PX, y: 25 + 60 });
     const drink = (kind, ml, from) => {
       total += ml;
+      award();
       emit('drink', { kind, ml, from, totalMl: total, settings: s });
     };
 
@@ -836,7 +933,9 @@
         emit('state', { totalMl: total, settings: s });
         setTimeout(() => drink('cup', s.goalMl - total, cupFrom()), 1400);
       }
+      if (k === 'r') { previewFish={};awarded=false;total=0;emit('state',previewState()); }
       if (k === 'e') {
+        awarded = false;
         const from = Math.min(1, total / s.goalMl);
         total = 0;
         emit('evaporate', { fromLevel: from });
@@ -858,9 +957,9 @@
       send() {},
       invoke(ch) {
         if (ch === 'water-ready') {
-          return Promise.resolve({
-            totalMl: 0, settings: s, hidden: false,
-            geometry: { menuBar: 25, fullRatio: 1 / 3 },
+          return fetch('../fish/fish.json').then(r => r.json()).then(data => {
+            previewCatalog = data;
+            return {...previewState(),hidden:false,dev:true,geometry:{menuBar:25,fullRatio:FULL_RATIO,baseRatio:BASE_RATIO}};
           });
         }
         return Promise.resolve(null);

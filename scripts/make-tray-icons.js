@@ -36,7 +36,7 @@ function sdfSides(x, y) {
   return Math.max(l, r, b);
 }
 
-function coverage(px, py, scale, fill, angle) {
+function coverage(px, py, scale, fill, angle, dot) {
   let hit = 0;
   const cos = Math.cos(-angle), sin = Math.sin(-angle);
   for (let i = 0; i < SS; i++) {
@@ -44,6 +44,7 @@ function coverage(px, py, scale, fill, angle) {
       // 采样点 → pt 坐标，再反向旋转回杯子坐标
       let x = (px + (i + 0.5) / SS) / scale;
       let y = (py + (j + 0.5) / SS) / scale;
+      if (dot && Math.hypot(x - 15.5, y - 2.5) <= 1.7) { hit++; continue; }
       const dx = x - PIVOT.x, dy = y - PIVOT.y;
       x = PIVOT.x + dx * cos - dy * sin;
       y = PIVOT.y + dx * sin + dy * cos;
@@ -60,12 +61,12 @@ function coverage(px, py, scale, fill, angle) {
   return hit / (SS * SS);
 }
 
-function render(scale, fill, angle) {
+function render(scale, fill, angle, dot = false) {
   const size = PT * scale;
   const rgba = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const a = coverage(x, y, scale, fill, angle);
+      const a = coverage(x, y, scale, fill, angle, dot);
       const o = (y * size + x) * 4;
       rgba[o] = rgba[o + 1] = rgba[o + 2] = 0;
       rgba[o + 3] = Math.round(a * 255);
@@ -121,9 +122,11 @@ const FILLS = [0, 0.25, 0.5, 0.75, 1];
 const TILTS = { '': 0, '-l': -10 * Math.PI / 180, '-r': 8 * Math.PI / 180 };
 for (let level = 0; level < FILLS.length; level++) {
   for (const [suffix, angle] of Object.entries(TILTS)) {
-    const base = `cup${level}${suffix}Template`;
-    fs.writeFileSync(path.join(OUT, `${base}.png`), render(1, FILLS[level], angle));
-    fs.writeFileSync(path.join(OUT, `${base}@2x.png`), render(2, FILLS[level], angle));
+    for (const dot of [false, true]) {
+    const base = `cup${level}${suffix}${dot ? '-dot' : ''}Template`;
+    fs.writeFileSync(path.join(OUT, `${base}.png`), render(1, FILLS[level], angle, dot));
+    fs.writeFileSync(path.join(OUT, `${base}@2x.png`), render(2, FILLS[level], angle, dot));
+    }
   }
 }
 console.log('tray icons →', OUT);
