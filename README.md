@@ -39,38 +39,14 @@
 
 ### 🤖 复制这段，交给你的 Agent
 
-使用能操作本机文件和终端的 Agent（例如 Codex、Claude Code），复制下面整段发给它。**这是给 Agent 的安装请求，不是直接粘贴到终端执行的命令。** 只有聊天能力的助手可以指导操作，但无法替你安装。
+把下面这段复制给 Codex、Claude Code 等能操作电脑的 Agent：
 
 ```text
-请帮我下载并安装「喝水养鱼 · SIP」v0.1.1。
-官方仓库：https://github.com/hexiaodou122/SIP
-
-先检查我的电脑是否为 Apple Silicon（M 系列）Mac，且 macOS >= 13。
-注意 Rosetta 环境下也要判断实际硬件。若不兼容，告诉我原因，不要安装。
-
-从以下官方地址下载 DMG 和校验和到下载文件夹：
-https://github.com/hexiaodou122/SIP/releases/download/v0.1.1/Sip-0.1.1-mac-arm64.dmg
-https://github.com/hexiaodou122/SIP/releases/download/v0.1.1/SHA256SUMS-0.1.1.txt
-
-下载完成后计算 DMG 的 SHA-256，核对校验和文件，并确认结果为：
-2a74906d11cf4e8e39bf41916bbad31a717e0c7411abb1337ec8f6e85e8008c2
-不一致或下载不完整就停止，不要安装。
-
-校验通过后挂载 DMG，把「喝水养鱼.app」安装到 /Applications。
-如果旧版正在运行，先让我退出；保留现有喝水记录和收藏，
-不要删除或改写 ~/Library/Application Support/sip 下的数据。
-需要系统授权时让我在系统界面操作，不要索要密码。
-
-安装后卸载磁盘镜像，打开应用，确认能启动，再告诉我结果。
-这是尚未经过 Apple 公证的试用版；如果被系统拦截，
-说明具体提示并引导我自行确认，不要自动移除隔离标记或关闭 Gatekeeper。
-只下载官方发布包，不要克隆源码、安装开发依赖或修改其他应用。
-
-最后告诉我：右上角或 Option＋点击桌面可以召出杯子，
-按住杯子倒水，右键杯子打开图鉴。
+请帮我下载并安装喝水养鱼 SIP，检查机型兼容性并校验安装包，保留已有记录和收藏。
+https://github.com/hexiaodou122/SIP
 ```
 
-[查看此版本与校验和](https://github.com/hexiaodou122/SIP/releases/tag/v0.1.1)
+Agent 会查看发布页并协助安装。需要系统授权时，跟着提示操作即可。
 
 ---
 
